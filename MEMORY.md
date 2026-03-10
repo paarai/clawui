@@ -25,6 +25,7 @@
 - Apport 已禁用（避免弹窗干扰 GUI 自动化）
 - 微信开发者工具通过 snap 安装
 - **技能加载问题（2026-03-11）：** `gui-automation` 最初放在 `projects/` 并用符号链接到 `skills/`，导致 OpenClaw 跳过（"Skipping skill path that resolves outside its configured root"）。解决：直接复制到 `skills/` 目录下（而非符号链接），现在技能状态为 ✓ ready。
+- **Heartbeat 自动化（2026-03-11）：** 配置 cron 作业每30分钟自动检查 TODO.md 并执行可自主完成任务。作业 ID: `9f3a29ee-2a03-4b86-bb19-5f9a627cb515`，isolated 模式，交付:none。
 
 ## 技能状态
 - `gui-automation` - 已就绪，本地加载成功（无需发布到 clawhub）
