@@ -96,7 +96,7 @@ c.navigate("https://example.com")
 c.click_element("button.submit")
 
 # OR click at viewport coordinates (for custom UI)
-c.click_at(250, 400)
+c.dispatch_mouse(250, 400)
 
 # Type text into element (real keyboard events)
 c.type_text('input[name="email"]', "user@example.com")
@@ -123,6 +123,22 @@ c.close_tab(target_id)
 ```
 
 All CDP operations are exposed to OpenClaw agent as tools: `cdp_navigate`, `cdp_click`, `cdp_click_at`, `cdp_type`, `cdp_eval`, `cdp_page_info`, `cdp_list_tabs`, `cdp_new_tab`, `cdp_activate_tab`, `cdp_close_tab`, `cdp_screenshot`.
+
+## Demos
+
+### Browser Form Demo
+Demonstrates all 11 CDP tools on httpbin.org/forms/post:
+```bash
+cd projects/gui-automation
+python3 demos/browser_form_demo.py
+```
+
+### GitHub Repository Creation (E2E)
+Automates full repo creation, assuming Chromium default profile is logged into GitHub.
+```bash
+python3 demos/github_repo_creation.py
+```
+Ensure a browser is running with `--remote-debugging-port=9222`.
 
 ## Requirements
 
