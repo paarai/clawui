@@ -39,6 +39,7 @@
 - **模块**: `src/recorder.py`，可记录所有工具调用到 JSON 并回放。
 
 ## 工具与流程
+- **认证机制**: 在 `create_github_repo_cdp.py` 中实现了健壮的非交互式认证机制。脚本按顺序尝试三种方法：优先使用 `GITHUB_TOKEN` 环境变量，若失败则调用 `gh` 命令行工具获取认证，最后才回退到依赖浏览器既有登录态的 CDP 模式。
 - **CRON 自动改进**: 配置了每 30 分钟运行的 isolated 会话 (`9f3a29ee`)，持续推动 TODO 中的任务。
 - **编辑策略**: 对于频繁变更的大型文件（如 `TODO.md`), `edit` 的精确匹配容易失败。
   - **规则**: `read` 文件获取精确 `oldText` 后再调用 `edit`。
@@ -56,7 +57,7 @@
   - `demos/github_repo_creation.py` (需已登录)
   - `demos/google_signup_demo.py` (Google 注册流程)
 - **工具**:
-  - `tools/check_issues.py` (监控 GitHub issues)
+  - `ClawUI/check_github_issues.py` (监控 GitHub issues)
   - `tools/start_chromium_with_profile.py` (使用已有 Profile 启动，保留登录态)
 - README 已更新，包含了故障排除和最佳实践。
 
@@ -68,3 +69,21 @@
   - 技术教训：
     - `cdp.evaluate()` 返回 `{'result':{'type','value'}}`，取值需使用 `.get('result',{}).get('value','')`
     - 现代网页 DOM 完全自定义，不能依赖猜测的选择器，必须检查实际结构
+
+## 今日进展 (2026-03-11)
+- **Vision Backend**: 实现多模态 AI 后端 (`vision_backend.py`)，支持 Ollama/OpenAI 模型（llava, moondream, gpt-4o），用于截图驱动的自动化决策。
+- **CDP 增强**:
+  - `Input.dispatchKeyEvent` 实现真实键盘输入，不再依赖输入框焦点
+  - `dispatch_mouse` 支持坐标点击，可操作自定义 UI 组件
+  - 新增 6 个 CDP 工具，覆盖导航、表单、标签页、截图等场景
+- **GitHub 登录实验**:
+  - 尝试 "Continue with Google" OAuth 流程，技术步骤完成但被 Google 安全策略拦截
+  - 结论：推荐使用浏览器预登录会话或 GitHub PAT 避免 OAuth
+- **其他交付**:
+  - `demos/simple_login_demo.py`（herokuapp 测试）
+  - `demos/github_google_login.py` + 测试文档
+- **Todo**: 所有核心后端完成（AT-SPI, X11, CDP, Marionette, Vision）。待测试 Firefox Marionette 实景场景。
+
+## 状态
+- **未提交变更**: `ClawUI/` (子模块，包含多项脚本和工具更新), `create_github_repo_cdp.py` (增强了认证逻辑), `TODO.md`, `MEMORY.md`, `memory/2026-03-11.md`。
+- **新增目录**: `tools/` (包含 `github_pat_manager.py`)。
