@@ -65,6 +65,13 @@
 - **编辑策略**：对于大型配置文件（如 TODO.md），`edit` 的精确匹配容易失败；改用 `write` 重写更可靠
 - **测试方法**：演样例子的 CDP 工具组合（导航→填表→截图→多标签切换）作为功能验收标准
 
+## 最新交付物 (2026-03-11)
+- `projects/gui-automation/demos/browser_form_demo.py` — 展示全部 11 个 CDP 工具的综合演示
+- `projects/gui-automation/demos/github_repo_creation.py` — 端到端 GitHub 仓库创建（需已登录 Chromium）
+- `projects/gui-automation/tools/check_issues.py` — 监控 GitHub issues，可集成到 cron
+- README 更新：CDP 使用指南、演示说明
+- TODO 持续维护，Memory 定期整理
+
 ## 技能状态
 - `gui-automation` - 已就绪，本地加载成功（无需发布到 clawhub）
 - `ddg-web-search` - 已安装
