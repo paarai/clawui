@@ -64,16 +64,24 @@ class CDPClient:
     def activate_tab(self, target_id: str) -> bool:
         """Activate a tab by target ID."""
         try:
-            self._http_get(f"/json/activate/{target_id}")
-            return True
+            conn = http.client.HTTPConnection(self.host, self.port, timeout=5)
+            conn.request("GET", f"/json/activate/{target_id}")
+            resp = conn.getresponse()
+            resp.read()
+            conn.close()
+            return resp.status == 200
         except Exception:
             return False
 
     def close_tab(self, target_id: str) -> bool:
         """Close a tab."""
         try:
-            self._http_get(f"/json/close/{target_id}")
-            return True
+            conn = http.client.HTTPConnection(self.host, self.port, timeout=5)
+            conn.request("GET", f"/json/close/{target_id}")
+            resp = conn.getresponse()
+            resp.read()
+            conn.close()
+            return resp.status == 200
         except Exception:
             return False
 
@@ -189,20 +197,16 @@ class CDPClient:
             })
 
     def type_text(self, selector: str = None, text: str = ""):
-        """Type text using real keyboard events. If selector is provided, focus element first via JS."""
+        """Type text using real keyboard events. If selector provided, click+focus first."""
         if selector:
-            # Focus element via JS, then dispatch key events to it
             self.evaluate(f'''
                 (function() {{
                     const el = document.querySelector("{selector}");
-                    if (el) {{
-                        el.focus();
-                        return true;
-                    }}
+                    if (el) {{ el.click(); el.focus(); return true; }}
                     return false;
                 }})()
             ''')
-            time.sleep(0.2)
+            time.sleep(0.3)
         # Now dispatch key events one by one
         self.dispatch_key(text)
 
