@@ -1,0 +1,50 @@
+# OpenClaw workspace ignores
+
+# Sensitive configuration (local only)
+.openclaw/
+.clawhub/
+credentials/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+.eggs/
+.tox/
+.coverage
+*.log
+
+# Node
+node_modules/
+npm-debug.log
+yarn-error.log
+lerna-debug.log
+.pnpm-debug.log
+dist/
+build/
+
+# Secrets
+.env
+.secrets/
+.vault/
+*.pem
+*.key
+
+# Project-specific
+projects/*/gui-automation  # symlink to skills version, don't commit
