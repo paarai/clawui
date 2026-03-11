@@ -1,5 +1,6 @@
-"""Unified perception layer - auto-route between AT-SPI and X11 backends."""
+"""Unified perception layer - auto-route between AT-SPI, X11, and CDP backends."""
 
+import json
 import sys
 import subprocess
 from typing import List, Tuple, Optional
@@ -39,11 +40,101 @@ except Exception as e:
     X11_AVAILABLE = False
     print(f"[WARN] X11 backend not available: {e}", file=sys.stderr)
 
+try:
+    from src.cdp_helper import CDPClient
+    _cdp_client = CDPClient()
+    CDP_AVAILABLE = _cdp_client.is_available()
+except Exception as e:
+    CDP_AVAILABLE = False
+    _cdp_client = None
+    print(f"[WARN] CDP not available: {e}", file=sys.stderr)
+
+
+def _get_cdp_client() -> Optional['CDPClient']:
+    """Get CDP client, re-checking availability if needed."""
+    global CDP_AVAILABLE, _cdp_client
+    if _cdp_client and _cdp_client.is_available():
+        CDP_AVAILABLE = True
+        return _cdp_client
+    # Try reconnecting
+    try:
+        from src.cdp_helper import CDPClient
+        _cdp_client = CDPClient()
+        CDP_AVAILABLE = _cdp_client.is_available()
+        return _cdp_client if CDP_AVAILABLE else None
+    except:
+        CDP_AVAILABLE = False
+        return None
+
+
+def _is_browser_app(app_name: str) -> bool:
+    """Check if app is a browser (best served by CDP)."""
+    browsers = {'chromium', 'chrome', 'brave', 'edge'}
+    return any(b in app_name.lower() for b in browsers)
+
 
 def _is_xwayland_app(app_name: str) -> bool:
     """Check if app typically runs under XWayland."""
     xwayland_apps = {'firefox', 'chromium', 'chrome', 'brave', 'discord', 'spotify', 'slack', 'teams', 'vscode'}
     return any(x in app_name.lower() for x in xwayland_apps)
+
+
+def _get_cdp_summary(cdp: 'CDPClient', detailed: bool = False) -> str:
+    """Get a summary of browser state via CDP.
+    
+    Args:
+        cdp: CDPClient instance
+        detailed: If True, include page DOM summary for active tab
+    """
+    tabs = cdp.list_targets()
+    pages = [t for t in tabs if t.get("type") == "page"]
+    if not pages:
+        return ""
+    
+    lines = [f"Browser: {len(pages)} tab(s)"]
+    for i, tab in enumerate(pages):
+        marker = " *" if i == 0 else ""  # First tab is usually active
+        title = tab.get("title", "(untitled)")[:60]
+        url = tab.get("url", "")
+        tid = tab.get("id", "")
+        lines.append(f"  [{i+1}]{marker} {title}")
+        lines.append(f"      url: {url}")
+        lines.append(f"      id: {tid}")
+    
+    if detailed and pages:
+        # Get active tab's page structure (forms, links, buttons)
+        try:
+            result = cdp.evaluate('''(function() {
+                var info = {title: document.title, url: location.href};
+                var forms = Array.from(document.querySelectorAll('input,select,textarea,button,[role=button]')).slice(0,30).map(function(el) {
+                    return {
+                        tag: el.tagName.toLowerCase(),
+                        type: el.type || '',
+                        name: el.name || el.id || '',
+                        role: el.getAttribute('role') || '',
+                        text: (el.textContent || el.value || '').substring(0,50).trim(),
+                        visible: el.offsetParent !== null
+                    };
+                });
+                info.interactive_elements = forms;
+                return JSON.stringify(info);
+            })()''')
+            if result and isinstance(result, dict):
+                val = result.get("result", {}).get("value", "")
+                if val:
+                    page_info = json.loads(val)
+                    lines.append(f"\n  Active page: {page_info.get('title', '')}")
+                    elements = page_info.get('interactive_elements', [])
+                    if elements:
+                        lines.append(f"  Interactive elements ({len(elements)}):")
+                        for el in elements:
+                            vis = "✓" if el.get("visible") else "hidden"
+                            name = el.get("name") or el.get("text", "")[:30]
+                            lines.append(f"    <{el['tag']}> type={el.get('type','')} name=\"{name}\" [{vis}]")
+        except:
+            pass
+    
+    return "\n".join(lines)
 
 
 def _has_x11_windows() -> bool:
@@ -58,7 +149,7 @@ def _has_x11_windows() -> bool:
 
 
 def list_applications() -> List[str]:
-    """List all applications (merge AT-SPI and X11)."""
+    """List all applications (merge AT-SPI, X11, and CDP browser tabs)."""
     apps = []
     if ATSPI_AVAILABLE:
         try:
@@ -70,6 +161,13 @@ def list_applications() -> List[str]:
             apps.extend(x11_list_apps())
         except:
             pass
+    # Add CDP browser info
+    cdp = _get_cdp_client()
+    if cdp:
+        tabs = cdp.list_targets()
+        pages = [t for t in tabs if t.get("type") == "page"]
+        if pages:
+            apps.append(f"Chromium ({len(pages)} tabs)")
     # Deduplicate
     return sorted(set(apps))
 
@@ -82,6 +180,11 @@ def get_ui_tree_summary(app_name: Optional[str] = None, max_depth: int = 5) -> s
     """
     # Specific app request
     if app_name:
+        # Browser apps: prefer CDP for rich page info
+        if _is_browser_app(app_name):
+            cdp = _get_cdp_client()
+            if cdp:
+                return _get_cdp_summary(cdp, detailed=True)
         if _is_xwayland_app(app_name) and X11_AVAILABLE:
             return x11_tree(app_name=app_name)[0]
         elif ATSPI_AVAILABLE:
@@ -89,7 +192,7 @@ def get_ui_tree_summary(app_name: Optional[str] = None, max_depth: int = 5) -> s
         else:
             return "No backend available"
 
-    # No app filter: try both
+    # No app filter: try all backends
     parts = []
     if ATSPI_AVAILABLE:
         try:
@@ -103,6 +206,15 @@ def get_ui_tree_summary(app_name: Optional[str] = None, max_depth: int = 5) -> s
             x11_out = x11_tree(app_name=None, max_depth=max_depth)[0]
             if x11_out.strip():
                 parts.append("=== X11 (XWayland) ===\n" + x11_out)
+        except:
+            pass
+    # CDP: include browser tab list
+    cdp = _get_cdp_client()
+    if cdp:
+        try:
+            cdp_summary = _get_cdp_summary(cdp)
+            if cdp_summary:
+                parts.append("=== CDP (Browser) ===\n" + cdp_summary)
         except:
             pass
 

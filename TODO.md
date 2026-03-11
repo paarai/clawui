@@ -13,15 +13,18 @@
 - [x] 端到端测试脚本（test_e2e_browser, test_simple_agent）
 
 ## 🔨 In Progress
-- [ ] 多标签页切换（Target.activateTarget）
-- [ ] cdp_screenshot（浏览器内部截图）
+- [ ] 端到端自动化验证（GitHub 仓库创建全流程）
+
+## ✅ Recently Done
+- [x] 多标签页切换（Target.activateTarget）— cdp_list_tabs/cdp_activate_tab/cdp_new_tab/cdp_close_tab
+- [x] cdp_screenshot（浏览器内部截图）— Page.captureScreenshot
+- [x] 集成 CDP 到 perception.py 路由层（三后端统一感知：AT-SPI + X11 + CDP）
+- [x] 完善 README（安装、配置、示例任务）
 
 ## 📋 Next Up
-- [ ] 完善 README（安装、配置、示例任务）
-- [ ] 端到端自动化验证（GitHub 仓库创建全流程）
-- [ ] 集成 CDP 到 perception.py 路由层
 - [ ] Marionette 后端支持 Firefox
 - [ ] 监控 GitHub Issues 并响应
+- [ ] wait_for_load 使用 Page.loadEventFired
 
 ## 🧊 Backlog
 - [ ] 重构 backends.py 统一工具选择
