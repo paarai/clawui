@@ -128,11 +128,14 @@ def create_tools():
 def execute_tool(name: str, input_data: dict) -> dict:
     """Execute a tool and return result."""
     import time
+    from .recorder import record_action
 
     try:
         if name == "screenshot":
             img = take_screenshot()
-            return {"type": "image", "base64": img}
+            result = {"type": "image", "base64": img}
+            record_action(name, input_data, result)
+            return result
 
         elif name == "ui_tree":
             tree = get_ui_tree_summary(app_name=input_data.get("app_name"), max_depth=5)
