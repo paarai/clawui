@@ -13,6 +13,10 @@ from .actions import (
     scroll, drag, focus_window, get_active_window,
 )
 from .backends import get_backend
+from .recorder import ActionRecorder, ActionPlayer, list_recordings
+
+# Global recorder instance
+_recorder = ActionRecorder()
 
 # CDP support (lazy import)
 _cdp_client = None
@@ -122,10 +126,24 @@ def create_tools():
         {"name": "ff_screenshot", "description": "Take a screenshot of Firefox page", "input_schema": {"type": "object", "properties": {}}},
         {"name": "ff_list_tabs", "description": "List Firefox tabs/windows", "input_schema": {"type": "object", "properties": {}}},
         {"name": "ff_switch_tab", "description": "Switch Firefox tab by handle", "input_schema": {"type": "object", "properties": {"handle": {"type": "string"}}, "required": ["handle"]}},
+        # Record/Replay tools
+        {"name": "record_start", "description": "Start recording actions into a replayable script", "input_schema": {"type": "object", "properties": {"name": {"type": "string", "description": "Recording name"}, "description": {"type": "string"}}}},
+        {"name": "record_stop", "description": "Stop recording and save to file", "input_schema": {"type": "object", "properties": {"filepath": {"type": "string", "description": "Save path (default: recordings/<name>.json)"}}}},
+        {"name": "replay", "description": "Replay a recorded script", "input_schema": {"type": "object", "properties": {"filepath": {"type": "string", "description": "Path to recording JSON"}, "speed": {"type": "number", "description": "Playback speed multiplier (default 1.0)"}, "dry_run": {"type": "boolean", "description": "Preview without executing"}}, "required": ["filepath"]}},
+        {"name": "list_recordings", "description": "List available recorded scripts", "input_schema": {"type": "object", "properties": {}}},
     ]
 
 
 def execute_tool(name: str, input_data: dict) -> dict:
+    """Execute a tool and return result."""
+    result = _execute_tool_inner(name, input_data)
+    # Record action if recording is active (skip meta-tools and screenshots)
+    if _recorder.recording and name not in ("record_start", "record_stop", "replay", "list_recordings", "screenshot"):
+        _recorder.record_action(name, input_data, result)
+    return result
+
+
+def _execute_tool_inner(name: str, input_data: dict) -> dict:
     """Execute a tool and return result."""
     import time
 
@@ -377,6 +395,40 @@ def execute_tool(name: str, input_data: dict) -> dict:
                 return {"type": "text", "text": "Marionette not available"}
             ok = mc.switch_to_window(input_data["handle"])
             return {"type": "text", "text": f"Switched: {ok}"}
+
+        # Record/Replay tools
+        elif name == "record_start":
+            _recorder.start(
+                name=input_data.get("name", ""),
+                description=input_data.get("description", ""),
+            )
+            return {"type": "text", "text": f"Recording started: {_recorder.metadata['name']}"}
+
+        elif name == "record_stop":
+            script = _recorder.stop()
+            rec_dir = os.path.join(os.path.dirname(__file__), "..", "recordings")
+            filepath = input_data.get("filepath") or os.path.join(rec_dir, f"{script['metadata']['name']}.json")
+            saved = _recorder.save(filepath)
+            return {"type": "text", "text": f"Recording saved: {saved} ({len(script['actions'])} actions)"}
+
+        elif name == "replay":
+            player = ActionPlayer(execute_fn=execute_tool)
+            script = player.load(input_data["filepath"])
+            speed = input_data.get("speed", 1.0)
+            dry_run = input_data.get("dry_run", False)
+            results = player.replay(script, speed=speed, dry_run=dry_run)
+            summary = f"Replayed {len(results)} actions"
+            errors = [r for r in results if r["result"].get("type") == "error"]
+            if errors:
+                summary += f" ({len(errors)} errors)"
+            return {"type": "text", "text": summary}
+
+        elif name == "list_recordings":
+            recs = list_recordings()
+            if not recs:
+                return {"type": "text", "text": "No recordings found"}
+            lines = [f"- {r['name']}: {r['actions']} actions ({r['created']})" for r in recs]
+            return {"type": "text", "text": "\n".join(lines)}
 
         else:
             return {"type": "text", "text": f"Unknown tool: {name}"}
