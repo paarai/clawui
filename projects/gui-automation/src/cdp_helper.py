@@ -151,10 +151,39 @@ class CDPClient:
             ws.close()
             return response.get("result")
         except ImportError:
-            # Fallback: use subprocess with websocat if available
             return self._send_via_websocat(ws_url, method, params)
         except Exception as e:
             return None
+
+    def _raw_cdp(self, method: str, params: dict = None) -> Any:
+        """Send raw CDP command to active tab."""
+        ws_url = self._get_ws_url()
+        if not ws_url:
+            return None
+        return self._send_cdp_command(ws_url, method, params or {})
+
+    def dispatch_mouse(self, x: int, y: int, click_type: str = "click"):
+        """Simulate real mouse click at viewport coordinates."""
+        self._raw_cdp("Input.dispatchMouseEvent", {
+            "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1
+        })
+        time.sleep(0.05)
+        self._raw_cdp("Input.dispatchMouseEvent", {
+            "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1
+        })
+
+    def dispatch_key(self, text: str):
+        """Simulate real keyboard typing character by character."""
+        for ch in text:
+            self._raw_cdp("Input.dispatchKeyEvent", {
+                "type": "keyDown", "text": ch, "key": ch,
+                "code": f"Key{ch.upper()}" if ch.isalpha() else "",
+                "unmodifiedText": ch
+            })
+            time.sleep(0.02)
+            self._raw_cdp("Input.dispatchKeyEvent", {
+                "type": "keyUp", "key": ch
+            })
 
     def _send_via_websocat(self, ws_url: str, method: str, params: dict = None) -> Any:
         """Fallback: use websocat CLI for WebSocket."""
