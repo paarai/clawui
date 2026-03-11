@@ -26,6 +26,7 @@ python3 -m src.main run "Open Firefox and search for 'OpenClaw'"
 - **Multi-Backend AI**: Use Claude, GPT-4o, Gemini, Ollama, or drive manually (OpenClaw agent)
 - **Error Recovery**: Auto-retry on backend failures
 - **OpenClaw Skill**: Deploy as a skill and control via Feishu/Telegram/CLI
+- **Chromium Automation (CDP)**: Full browser control via Chrome DevTools Protocol
 
 ## Architecture
 
@@ -37,6 +38,7 @@ Perception Layer:
 Action Layer:
   - xdotool (X11) / ydotool (Wayland) – Mouse & keyboard
   - AT-SPI direct actions – Click, set text, toggle
+  - CDP (Chrome DevTools Protocol) – Browser automation
 
 Agent Loop:
   - You (OpenClaw) are the brain – call tools sequentially
@@ -44,6 +46,8 @@ Agent Loop:
 ```
 
 ## Tool Reference
+
+### Desktop Automation (AT-SPI / X11 / Wayland)
 
 ```python
 import sys
@@ -76,6 +80,50 @@ press_key("Return")
 img_b64 = take_screenshot()
 ```
 
+### Browser Automation (CDP)
+
+Requires Chromium started with `--remote-debugging-port=9222` (OpenClaw skill does this automatically).
+
+```python
+from src.cdp_helper import CDPClient
+
+c = CDPClient()
+
+# Navigate
+c.navigate("https://example.com")
+
+# Click element by CSS selector
+c.click_element("button.submit")
+
+# OR click at viewport coordinates (for custom UI)
+c.click_at(250, 400)
+
+# Type text into element (real keyboard events)
+c.type_text('input[name="email"]', "user@example.com")
+
+# Press special keys
+c.dispatch_key("\t")  # Tab
+c.dispatch_key("\n")  # Enter
+
+# Execute JavaScript
+result = c.evaluate("document.title")
+
+# Get page info
+url = c.get_page_url()
+title = c.get_page_title()
+
+# Browser screenshot (base64 PNG)
+ss_b64 = c.take_screenshot()
+
+# Tab management
+tabs = c.list_targets()
+new_tab = c.new_tab("https://new.page")
+c.activate_tab(target_id)
+c.close_tab(target_id)
+```
+
+All CDP operations are exposed to OpenClaw agent as tools: `cdp_navigate`, `cdp_click`, `cdp_click_at`, `cdp_type`, `cdp_eval`, `cdp_page_info`, `cdp_list_tabs`, `cdp_new_tab`, `cdp_activate_tab`, `cdp_close_tab`, `cdp_screenshot`.
+
 ## Requirements
 
 - Linux with AT-SPI (GNOME recommended)
@@ -97,6 +145,18 @@ Environment variables:
 - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`: respective API keys
 - `OLLAMA_BASE_URL`: Ollama API URL (default: `http://localhost:11434`)
 - `ANYROUTER_API_KEY`: OpenClaw's internal backend (auto-loaded from config)
+
+## CDP (Browser) Setup
+
+Automatically launched by OpenClaw skill with:
+```
+chromium --remote-debugging-port=9222 --remote-allow-origins="*"
+```
+
+To run standalone:
+```bash
+snap run chromium --remote-debugging-port=9222 --remote-allow-origins="*" &
+```
 
 ## Project Structure
 
