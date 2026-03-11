@@ -50,9 +50,9 @@ class CDPBackend:
         '''
         return self.client.evaluate(js)
 
-    def type(self, text: str, target_selector: str = None):
+    def type_in_element(self, text: str, selector: str = None):
         """Type text using real keyboard dispatch (robust)."""
-        self.client.type_text(target_selector, text)
+        self.client.type_text(selector, text)
         return f"typed: '{text}' via dispatchKeyEvent"
 
     def press_key(self, key: str):
