@@ -16,11 +16,11 @@
 - [x] 创建 GitHub 仓库创建端到端演示（github_repo_creation.py）
 - [x] 添加 GitHub issues 监控脚本（tools/check_issues.py）
 - [x] 配置每30分钟自主改进 cron 作业
-- [x] Marionette 后端支持 Firefox（代码实现完成，待启用 TCP  Marionette 端口）
+- [x] Marionette 后端支持 Firefox（代码实现完成，待启用 TCP 端口）
+- [x] 录制/回放功能（src/recorder.py，支持 JSON 记录和 dry-run）
 
 ## 🔨 In Progress / Partial
-- [ ] 录制/回放功能（记录操作序列）
-- [ ] 集成 CDP/Marionette 到 perception.py 路由层
+- [ ] 集成 CDP/Marionette 到 perception.py 路由层（让 agent 自动感知并选择后端）
 - [ ] 自动登录机制（可选的 GitHub token 注入或重用 gh auth）
 
 ## 📋 Next Up
@@ -29,4 +29,4 @@
 - [ ] 测试 Firefox Marionette（需启动 firefox --marionette --marionette-port 2828）
 
 ---
-Last updated: 2026-03-11 16:30 (GMT+8)
+Last updated: 2026-03-11 16:35 (GMT+8)
