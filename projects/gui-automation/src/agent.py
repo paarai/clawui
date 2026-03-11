@@ -64,6 +64,16 @@ Browser tools (CDP - requires Chromium with --remote-debugging-port=9222):
 - cdp_close_tab: Close a tab by target ID
 - cdp_screenshot: Take a screenshot of the browser page
 
+Browser tools (Marionette - requires Firefox with --marionette):
+- ff_navigate: Navigate Firefox to URL
+- ff_click: Click element by CSS selector in Firefox
+- ff_type: Type text into element in Firefox
+- ff_eval: Execute JavaScript in Firefox
+- ff_page_info: Get Firefox page title and URL
+- ff_screenshot: Take screenshot of Firefox page
+- ff_list_tabs: List Firefox tabs/windows
+- ff_switch_tab: Switch Firefox tab by handle
+
 Strategy:
 1. First use ui_tree to understand the interface structure
 2. If you can find the target element via AT-SPI, use do_action or click on its coordinates
@@ -292,6 +302,81 @@ def execute_tool(name: str, input_data: dict) -> dict:
             if b64:
                 return {"type": "image", "base64": b64}
             return {"type": "text", "text": "Screenshot failed"}
+
+        # Marionette (Firefox) tools
+        elif name == "ff_navigate":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available. Start Firefox with --marionette"}
+            mc.navigate(input_data["url"])
+            time.sleep(2)
+            info = {"url": mc.get_url(), "title": mc.get_title()}
+            return {"type": "text", "text": json.dumps(info, ensure_ascii=False)}
+
+        elif name == "ff_click":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            el = mc.find_element("css selector", input_data["selector"])
+            if not el:
+                return {"type": "text", "text": "Element not found"}
+            ok = mc.click_element(el)
+            return {"type": "text", "text": f"Click: {ok}"}
+
+        elif name == "ff_type":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            el = mc.find_element("css selector", input_data["selector"])
+            if not el:
+                return {"type": "text", "text": "Element not found"}
+            mc.send_keys(el, input_data["text"])
+            return {"type": "text", "text": f"Typed into {input_data['selector']}"}
+
+        elif name == "ff_eval":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            result = mc.execute_script(input_data["script"])
+            return {"type": "text", "text": json.dumps(result, ensure_ascii=False)[:500]}
+
+        elif name == "ff_page_info":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            info = {"url": mc.get_url(), "title": mc.get_title()}
+            return {"type": "text", "text": json.dumps(info, ensure_ascii=False)}
+
+        elif name == "ff_screenshot":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            b64 = mc.take_screenshot()
+            if b64:
+                return {"type": "image", "base64": b64}
+            return {"type": "text", "text": "Screenshot failed"}
+
+        elif name == "ff_list_tabs":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            handles = mc.get_window_handles()
+            return {"type": "text", "text": json.dumps(handles, ensure_ascii=False)}
+
+        elif name == "ff_switch_tab":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            ok = mc.switch_to_window(input_data["handle"])
+            return {"type": "text", "text": f"Switched: {ok}"}
 
         else:
             return {"type": "text", "text": f"Unknown tool: {name}"}

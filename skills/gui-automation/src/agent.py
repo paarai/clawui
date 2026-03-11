@@ -4,12 +4,10 @@ import json
 import os
 
 from .screenshot import take_screenshot, get_screen_size
-from .perception import (
+from .atspi_helper import (
     list_applications, get_ui_tree_summary, find_elements,
-    do_action, set_text, click_at as perception_click_at,
-    activate_window,
+    do_action, set_text, get_focused_element,
 )
-from .atspi_helper import get_focused_element
 from .actions import (
     click, double_click, right_click, type_text, press_key,
     scroll, drag, focus_window, get_active_window,
@@ -66,6 +64,16 @@ Browser tools (CDP - requires Chromium with --remote-debugging-port=9222):
 - cdp_close_tab: Close a tab by target ID
 - cdp_screenshot: Take a screenshot of the browser page
 
+Browser tools (Marionette - requires Firefox with --marionette):
+- ff_navigate: Navigate Firefox to URL
+- ff_click: Click element by CSS selector in Firefox
+- ff_type: Type text into element in Firefox
+- ff_eval: Execute JavaScript in Firefox
+- ff_page_info: Get Firefox page title and URL
+- ff_screenshot: Take screenshot of Firefox page
+- ff_list_tabs: List Firefox tabs/windows
+- ff_switch_tab: Switch Firefox tab by handle
+
 Strategy:
 1. First use ui_tree to understand the interface structure
 2. If you can find the target element via AT-SPI, use do_action or click on its coordinates
@@ -105,6 +113,15 @@ def create_tools():
         {"name": "cdp_activate_tab", "description": "Switch to a browser tab by target ID", "input_schema": {"type": "object", "properties": {"target_id": {"type": "string"}}, "required": ["target_id"]}},
         {"name": "cdp_close_tab", "description": "Close a browser tab by target ID", "input_schema": {"type": "object", "properties": {"target_id": {"type": "string"}}, "required": ["target_id"]}},
         {"name": "cdp_screenshot", "description": "Take a screenshot of the browser page", "input_schema": {"type": "object", "properties": {}}},
+        # Marionette tools (Firefox automation)
+        {"name": "ff_navigate", "description": "Navigate Firefox to URL (requires firefox --marionette)", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
+        {"name": "ff_click", "description": "Click element by CSS selector in Firefox", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"]}},
+        {"name": "ff_type", "description": "Type text into element in Firefox", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "text": {"type": "string"}}, "required": ["selector", "text"]}},
+        {"name": "ff_eval", "description": "Execute JavaScript in Firefox", "input_schema": {"type": "object", "properties": {"script": {"type": "string"}}, "required": ["script"]}},
+        {"name": "ff_page_info", "description": "Get Firefox page title and URL", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "ff_screenshot", "description": "Take a screenshot of Firefox page", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "ff_list_tabs", "description": "List Firefox tabs/windows", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "ff_switch_tab", "description": "Switch Firefox tab by handle", "input_schema": {"type": "object", "properties": {"handle": {"type": "string"}}, "required": ["handle"]}},
     ]
 
 
@@ -285,6 +302,81 @@ def execute_tool(name: str, input_data: dict) -> dict:
             if b64:
                 return {"type": "image", "base64": b64}
             return {"type": "text", "text": "Screenshot failed"}
+
+        # Marionette (Firefox) tools
+        elif name == "ff_navigate":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available. Start Firefox with --marionette"}
+            mc.navigate(input_data["url"])
+            time.sleep(2)
+            info = {"url": mc.get_url(), "title": mc.get_title()}
+            return {"type": "text", "text": json.dumps(info, ensure_ascii=False)}
+
+        elif name == "ff_click":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            el = mc.find_element("css selector", input_data["selector"])
+            if not el:
+                return {"type": "text", "text": "Element not found"}
+            ok = mc.click_element(el)
+            return {"type": "text", "text": f"Click: {ok}"}
+
+        elif name == "ff_type":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            el = mc.find_element("css selector", input_data["selector"])
+            if not el:
+                return {"type": "text", "text": "Element not found"}
+            mc.send_keys(el, input_data["text"])
+            return {"type": "text", "text": f"Typed into {input_data['selector']}"}
+
+        elif name == "ff_eval":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            result = mc.execute_script(input_data["script"])
+            return {"type": "text", "text": json.dumps(result, ensure_ascii=False)[:500]}
+
+        elif name == "ff_page_info":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            info = {"url": mc.get_url(), "title": mc.get_title()}
+            return {"type": "text", "text": json.dumps(info, ensure_ascii=False)}
+
+        elif name == "ff_screenshot":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            b64 = mc.take_screenshot()
+            if b64:
+                return {"type": "image", "base64": b64}
+            return {"type": "text", "text": "Screenshot failed"}
+
+        elif name == "ff_list_tabs":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            handles = mc.get_window_handles()
+            return {"type": "text", "text": json.dumps(handles, ensure_ascii=False)}
+
+        elif name == "ff_switch_tab":
+            from src.marionette_helper import get_or_create_marionette_client
+            mc = get_or_create_marionette_client()
+            if not mc:
+                return {"type": "text", "text": "Marionette not available"}
+            ok = mc.switch_to_window(input_data["handle"])
+            return {"type": "text", "text": f"Switched: {ok}"}
 
         else:
             return {"type": "text", "text": f"Unknown tool: {name}"}
