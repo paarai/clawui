@@ -20,7 +20,7 @@
 - [x] 录制/回放功能（src/recorder.py，支持 JSON 记录和 dry-run）
 
 ## 🔨 In Progress / Partial
-- [ ] 集成 CDP/Marionette 到 perception.py 路由层（让 agent 自动感知并选择后端）
+- [x] 集成 CDP/Marionette 到 perception.py 路由层（让 agent 自动感知并选择后端）
 - [ ] 自动登录机制（可选的 GitHub token 注入或重用 gh auth）
 
 ## 📋 Next Up
