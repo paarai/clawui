@@ -35,6 +35,25 @@ def _run_cmd(cmd: List[str]) -> str:
         return ""
 
 
+def _get_window_class(wid: int) -> str:
+    """Get window class using xdotool, fallback to xprop."""
+    # Try xdotool first
+    class_name = _run_cmd(['xdotool', 'getwindowclassname', str(wid)]).strip()
+    if class_name:
+        return class_name
+    # Fallback: xprop WM_CLASS
+    try:
+        xprop_out = subprocess.run(['xprop', '-id', str(wid), 'WM_CLASS'], capture_output=True, text=True, timeout=2).stdout
+        # Output: WM_CLASS(STRING) = "firefox", "Firefox"
+        match = re.search(r'=\s*"([^"]+)"\s*,\s*"([^"]+)"', xprop_out)
+        if match:
+            # Return the second (human-readable) class, or first
+            return match.group(2) or match.group(1)
+    except:
+        pass
+    return ""
+
+
 def list_windows() -> List[X11Window]:
     """List all visible X11 windows with geometry."""
     windows = []
@@ -46,7 +65,8 @@ def list_windows() -> List[X11Window]:
             # Get window geometry
             geom = subprocess.run(['xdotool', 'getwindowgeometry', str(wid_int)], capture_output=True, text=True, timeout=2)
             title = _run_cmd(['xdotool', 'getwindowname', str(wid_int)])
-            class_name = _run_cmd(['xdotool', 'getwindowclassname', str(wid_int)])
+            # Use enhanced class detection
+            class_name = _get_window_class(wid_int)
             pid_line = _run_cmd(['xdotool', 'getwindowpid', str(wid_int)])
             pid = int(pid_line) if pid_line.isdigit() else 0
 
