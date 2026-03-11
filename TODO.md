@@ -24,7 +24,7 @@
 - [ ] 自动登录机制（可选的 GitHub token 注入或重用 gh auth）
 
 ## 📋 Next Up
-- [x] 响应 GitHub Issues（如有）(Checked at 18:31)
+- [x] 响应 GitHub Issues（如有）(Checked at 19:30)
 - [x] 完善 README：添加故障排除和最佳实践
 - [x] 测试 Firefox Marionette（已通过端到端测试验证）
 
