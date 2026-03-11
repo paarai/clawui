@@ -211,3 +211,16 @@ The goal: Be helpful without being annoying. Check in a few times a day, do usef
 ## Make It Yours
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.
+
+## Edit Tool Rule (MANDATORY)
+
+**NEVER use `edit` without first `read`-ing the exact lines you want to replace.**
+
+Steps:
+1. `read` the file (with offset/limit to get the target section)
+2. Copy the EXACT text from read output as `oldText`
+3. Only then call `edit` with that precise oldText
+
+If the edit target is large (>20 lines) or the file changes frequently, use `write` to rewrite the whole file instead.
+
+**NO EXCEPTIONS.** Guessing oldText from memory causes match failures.
