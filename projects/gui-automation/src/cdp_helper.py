@@ -206,6 +206,13 @@ class CDPClient:
         # Now dispatch key events one by one
         self.dispatch_key(text)
 
+    def take_screenshot(self) -> Optional[str]:
+        """Take a screenshot of the browser page, returns base64 PNG."""
+        result = self._raw_cdp("Page.captureScreenshot", {"format": "png"})
+        if result and isinstance(result, dict):
+            return result.get("data")
+        return None
+
     def _send_via_websocat(self, ws_url: str, method: str, params: dict = None) -> Any:
         """Fallback: use websocat CLI for WebSocket."""
         msg = json.dumps({"id": 1, "method": method, "params": params or {}})

@@ -176,14 +176,42 @@ class CDPClient:
         """Simulate real keyboard typing character by character."""
         for ch in text:
             self._raw_cdp("Input.dispatchKeyEvent", {
-                "type": "keyDown", "text": ch, "key": ch,
+                "type": "keyDown",
+                "text": ch,
+                "key": ch,
                 "code": f"Key{ch.upper()}" if ch.isalpha() else "",
                 "unmodifiedText": ch
             })
             time.sleep(0.02)
             self._raw_cdp("Input.dispatchKeyEvent", {
-                "type": "keyUp", "key": ch
+                "type": "keyUp",
+                "key": ch
             })
+
+    def type_text(self, selector: str = None, text: str = ""):
+        """Type text using real keyboard events. If selector is provided, focus element first via JS."""
+        if selector:
+            # Focus element via JS, then dispatch key events to it
+            self.evaluate(f'''
+                (function() {{
+                    const el = document.querySelector("{selector}");
+                    if (el) {{
+                        el.focus();
+                        return true;
+                    }}
+                    return false;
+                }})()
+            ''')
+            time.sleep(0.2)
+        # Now dispatch key events one by one
+        self.dispatch_key(text)
+
+    def take_screenshot(self) -> Optional[str]:
+        """Take a screenshot of the browser page, returns base64 PNG."""
+        result = self._raw_cdp("Page.captureScreenshot", {"format": "png"})
+        if result and isinstance(result, dict):
+            return result.get("data")
+        return None
 
     def _send_via_websocat(self, ws_url: str, method: str, params: dict = None) -> Any:
         """Fallback: use websocat CLI for WebSocket."""

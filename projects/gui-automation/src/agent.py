@@ -54,9 +54,15 @@ Available tools:
 Browser tools (CDP - requires Chromium with --remote-debugging-port=9222):
 - cdp_navigate: Navigate browser to URL
 - cdp_click: Click element by CSS selector
-- cdp_type: Type text into element by CSS selector  
+- cdp_click_at: Click at viewport coordinates (x,y)
+- cdp_type: Type text into element by CSS selector (real keyboard events)
 - cdp_eval: Evaluate JavaScript expression
 - cdp_page_info: Get page title and URL
+- cdp_list_tabs: List all open browser tabs
+- cdp_new_tab: Open a new tab
+- cdp_activate_tab: Switch to a tab by target ID
+- cdp_close_tab: Close a tab by target ID
+- cdp_screenshot: Take a screenshot of the browser page
 
 Strategy:
 1. First use ui_tree to understand the interface structure
@@ -92,6 +98,11 @@ def create_tools():
         {"name": "cdp_eval", "description": "Evaluate JavaScript in browser page", "input_schema": {"type": "object", "properties": {"expression": {"type": "string"}}, "required": ["expression"]}},
         {"name": "cdp_page_info", "description": "Get current browser page title and URL", "input_schema": {"type": "object", "properties": {}}},
         {"name": "cdp_click_at", "description": "Click at viewport coordinates (x,y) in browser", "input_schema": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
+        {"name": "cdp_list_tabs", "description": "List all browser tabs", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "cdp_new_tab", "description": "Open a new browser tab", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}}},
+        {"name": "cdp_activate_tab", "description": "Switch to a browser tab by target ID", "input_schema": {"type": "object", "properties": {"target_id": {"type": "string"}}, "required": ["target_id"]}},
+        {"name": "cdp_close_tab", "description": "Close a browser tab by target ID", "input_schema": {"type": "object", "properties": {"target_id": {"type": "string"}}, "required": ["target_id"]}},
+        {"name": "cdp_screenshot", "description": "Take a screenshot of the browser page", "input_schema": {"type": "object", "properties": {}}},
     ]
 
 
@@ -233,6 +244,45 @@ def execute_tool(name: str, input_data: dict) -> dict:
                 return {"type": "text", "text": "CDP not available"}
             result = cdp.click_at(input_data["x"], input_data["y"])
             return {"type": "text", "text": result}
+
+        elif name == "cdp_list_tabs":
+            cdp = _get_cdp()
+            if not cdp:
+                return {"type": "text", "text": "CDP not available"}
+            tabs = cdp.client.list_targets()
+            pages = [{"id": t.get("id"), "title": t.get("title", ""), "url": t.get("url", "")} for t in tabs if t.get("type") == "page"]
+            return {"type": "text", "text": json.dumps(pages, ensure_ascii=False)}
+
+        elif name == "cdp_new_tab":
+            cdp = _get_cdp()
+            if not cdp:
+                return {"type": "text", "text": "CDP not available"}
+            url = input_data.get("url", "about:blank")
+            result = cdp.client.new_tab(url)
+            return {"type": "text", "text": f"New tab: {json.dumps(result, ensure_ascii=False)[:300]}"}
+
+        elif name == "cdp_activate_tab":
+            cdp = _get_cdp()
+            if not cdp:
+                return {"type": "text", "text": "CDP not available"}
+            ok = cdp.client.activate_tab(input_data["target_id"])
+            return {"type": "text", "text": f"Activated: {ok}"}
+
+        elif name == "cdp_close_tab":
+            cdp = _get_cdp()
+            if not cdp:
+                return {"type": "text", "text": "CDP not available"}
+            ok = cdp.client.close_tab(input_data["target_id"])
+            return {"type": "text", "text": f"Closed: {ok}"}
+
+        elif name == "cdp_screenshot":
+            cdp = _get_cdp()
+            if not cdp:
+                return {"type": "text", "text": "CDP not available"}
+            b64 = cdp.client.take_screenshot()
+            if b64:
+                return {"type": "image", "base64": b64}
+            return {"type": "text", "text": "Screenshot failed"}
 
         else:
             return {"type": "text", "text": f"Unknown tool: {name}"}
