@@ -25,7 +25,7 @@
 
 ## 📋 Next Up
 - [ ] 响应 GitHub Issues（如有）
-- [ ] 完善 README：添加故障排除和最佳实践
+- [x] 完善 README：添加故障排除和最佳实践
 - [ ] 测试 Firefox Marionette（需启动 firefox --marionette --marionette-port 2828）
 
 ---

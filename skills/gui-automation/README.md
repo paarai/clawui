@@ -191,6 +191,116 @@ clawui/
 └── SKILL.md             # OpenClaw skill manifest
 ```
 
+## Troubleshooting
+
+### AT-SPI not detecting applications
+
+**Symptom:** `list_applications()` returns empty or missing apps.
+
+```bash
+# Check AT-SPI is running
+python3 -c "import pyatspi; print(len(pyatspi.Registry.getDesktop(0)))"
+# Should print > 0
+
+# Enable AT-SPI if disabled
+gsettings set org.gnome.desktop.interface toolkit-accessibility true
+# Then log out/in
+```
+
+**Common causes:**
+- AT-SPI disabled in GNOME settings
+- Running in a minimal session (no accessibility bus)
+- Snap/Flatpak apps may have limited AT-SPI exposure
+
+### XWayland apps not visible via AT-SPI
+
+**Symptom:** Firefox, Chromium, or Electron apps don't appear in AT-SPI tree.
+
+This is a known Wayland limitation. ClawUI handles this with multiple backends:
+- **Chromium/Chrome** → Use CDP backend (`cdp_*` tools)
+- **Firefox** → Use Marionette backend (`ff_*` tools) with `firefox --marionette --marionette-port 2828`
+- **Other X11 apps** → Use X11 backend (xdotool) — works if app runs under XWayland
+
+### CDP connection fails
+
+**Symptom:** `CDPClient()` raises connection error.
+
+```bash
+# Check if Chromium is running with debug port
+curl -s http://localhost:9222/json/version | python3 -m json.tool
+
+# If nothing, restart Chromium with:
+snap run chromium --remote-debugging-port=9222 --remote-allow-origins="*" &
+
+# If using a profile, use --user-data-dir to avoid conflicts:
+snap run chromium --remote-debugging-port=9222 --remote-allow-origins="*" \
+  --user-data-dir="$HOME/snap/chromium/common/chromium-debug"
+```
+
+**Snap-specific issues:**
+- Chromium snap may ignore `--remote-debugging-port` if another instance is running
+- Kill all Chromium processes first: `pkill -f chromium`
+- Use `snap run chromium` (not just `chromium`)
+
+### Screenshot fails
+
+**Symptom:** `take_screenshot()` returns None or errors.
+
+```bash
+# Check available screenshot tools (tried in order):
+which gnome-screenshot  # GNOME
+which scrot             # X11
+which grim              # Wayland (sway/wlroots)
+
+# Install if missing:
+sudo apt install gnome-screenshot  # or scrot
+```
+
+### xdotool doesn't work on Wayland
+
+xdotool only works with X11/XWayland windows. On pure Wayland:
+- Use AT-SPI `do_action()` for clicking buttons/menus
+- Use `ydotool` for mouse/keyboard (requires ydotoold daemon)
+- CDP/Marionette for browser automation
+
+### Agent tools return no results
+
+**Symptom:** `find_elements()` or `get_ui_tree_summary()` returns empty.
+
+- Ensure the target app is **focused and visible** (not minimized)
+- Try increasing `max_depth` (default 3 may miss deeply nested elements)
+- Some apps expose minimal AT-SPI trees — use screenshot + coordinates as fallback
+
+## Best Practices
+
+### For OpenClaw Integration
+
+1. **Use the perception layer** — Don't call backends directly. `perception.py` auto-routes to the best backend (AT-SPI → X11 → CDP → Marionette).
+
+2. **Prefer AT-SPI actions over coordinate clicks** — `do_action(element, "click")` is more reliable than `click(x, y)` because it doesn't depend on window position.
+
+3. **Use CDP for all browser work** — AT-SPI can't see inside web pages. CDP gives you full DOM access, form filling, and JavaScript execution.
+
+4. **Chain tools, don't guess** — Read the UI tree first (`get_ui_tree_summary`), find the element, then act. Don't assume button positions.
+
+### For Reliability
+
+1. **Add small delays between actions** — UI needs time to update. A 0.5s sleep between click and read prevents stale state.
+
+2. **Verify after acting** — After clicking a button, re-read the UI tree to confirm the expected change happened.
+
+3. **Use CSS selectors for CDP** — `cdp_click("button.submit")` is more stable than coordinate clicks. Fall back to `cdp_click_at(x, y)` only for custom UI components.
+
+4. **Handle popups and dialogs** — Check for unexpected modal dialogs before assuming your action failed.
+
+### For Development
+
+1. **Test with `test_e2e_browser.py`** — Run the E2E test suite after changes to catch regressions.
+
+2. **Keep backends independent** — Each backend (AT-SPI, X11, CDP, Marionette) should work standalone. The perception layer composes them.
+
+3. **Log tool calls** — When debugging agent behavior, enable verbose logging to see which tools were called and their return values.
+
 ## License
 
 MIT
