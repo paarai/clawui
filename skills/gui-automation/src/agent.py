@@ -4,10 +4,12 @@ import json
 import os
 
 from .screenshot import take_screenshot, get_screen_size
-from .atspi_helper import (
+from .perception import (
     list_applications, get_ui_tree_summary, find_elements,
-    do_action, set_text, get_focused_element,
+    do_action, set_text, click_at as perception_click_at,
+    activate_window,
 )
+from .atspi_helper import get_focused_element
 from .actions import (
     click, double_click, right_click, type_text, press_key,
     scroll, drag, focus_window, get_active_window,

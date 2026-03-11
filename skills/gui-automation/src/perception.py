@@ -6,8 +6,9 @@ import subprocess
 from typing import List, Tuple, Optional
 
 # Import backends
+# Support both relative and absolute imports
 try:
-    from src.atspi_helper import (
+    from .atspi_helper import (
         list_applications as atspi_list_apps,
         get_ui_tree_summary as atspi_tree,
         find_elements as atspi_find,
@@ -15,12 +16,22 @@ try:
         set_text as atspi_set_text,
     )
     ATSPI_AVAILABLE = True
-except Exception as e:
-    ATSPI_AVAILABLE = False
-    print(f"[WARN] AT-SPI not available: {e}", file=sys.stderr)
+except Exception:
+    try:
+        from src.atspi_helper import (
+            list_applications as atspi_list_apps,
+            get_ui_tree_summary as atspi_tree,
+            find_elements as atspi_find,
+            do_action as atspi_do_action,
+            set_text as atspi_set_text,
+        )
+        ATSPI_AVAILABLE = True
+    except Exception as e:
+        ATSPI_AVAILABLE = False
+        print(f"[WARN] AT-SPI not available: {e}", file=sys.stderr)
 
 try:
-    from src.x11_helper import (
+    from .x11_helper import (
         list_windows as x11_list_windows,
         X11Window,
         get_ui_tree_summary as x11_tree,
@@ -36,18 +47,41 @@ try:
         list_applications as x11_list_apps,
     )
     X11_AVAILABLE = True
-except Exception as e:
-    X11_AVAILABLE = False
-    print(f"[WARN] X11 backend not available: {e}", file=sys.stderr)
+except Exception:
+    try:
+        from src.x11_helper import (
+            list_windows as x11_list_windows,
+            X11Window,
+            get_ui_tree_summary as x11_tree,
+            activate_window as x11_activate,
+            click_window as x11_click,
+            click_at as x11_click_at,
+            type_text as x11_type,
+            key_press as x11_key,
+            find_windows_by_class as x11_find_by_class,
+            find_windows_by_title as x11_find_by_title,
+            do_action as x11_do_action,
+            set_text as x11_set_text,
+            list_applications as x11_list_apps,
+        )
+        X11_AVAILABLE = True
+    except Exception as e:
+        X11_AVAILABLE = False
+        print(f"[WARN] X11 backend not available: {e}", file=sys.stderr)
 
 try:
-    from src.cdp_helper import CDPClient
+    from .cdp_helper import CDPClient
     _cdp_client = CDPClient()
     CDP_AVAILABLE = _cdp_client.is_available()
-except Exception as e:
-    CDP_AVAILABLE = False
-    _cdp_client = None
-    print(f"[WARN] CDP not available: {e}", file=sys.stderr)
+except Exception:
+    try:
+        from src.cdp_helper import CDPClient
+        _cdp_client = CDPClient()
+        CDP_AVAILABLE = _cdp_client.is_available()
+    except Exception as e:
+        CDP_AVAILABLE = False
+        _cdp_client = None
+        print(f"[WARN] CDP not available: {e}", file=sys.stderr)
 
 
 def _get_cdp_client() -> Optional['CDPClient']:
