@@ -83,8 +83,10 @@
 - `projects/gui-automation/demos/browser_form_demo.py` — 展示全部 11 个 CDP 工具的综合演示
 - `projects/gui-automation/demos/github_repo_creation.py` — 端到端 GitHub 仓库创建（需已登录 Chromium）
 - `projects/gui-automation/tools/check_issues.py` — 监控 GitHub issues，可集成到 cron
-- README 更新：CDP 使用指南、演示说明
+- `projects/gui-automation/tools/start_chromium_with_profile.py` — 使用已有 Chromium profile 启动，保留登录态
+- README 更新：CDP 使用指南、演示说明、解决登录问题的启动脚本
 - TODO 持续维护，Memory 定期整理
+- **Edit 匹配失败处理**：对 TODO.md、README.md 等易改动文件，改用 write 全量覆盖避免精确匹配失败
 
 ## 技能状态
 - `gui-automation` - 已就绪，本地加载成功（无需发布到 clawhub）
