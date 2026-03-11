@@ -1,41 +1,75 @@
 #!/usr/bin/env python3
 """
-CDP-based GitHub repo creation automation.
-Steps:
-1. Launch Chromium with CDP
-2. Navigate to github.com/login (or assume logged in)
-3. If login needed, prompt user (skip in demo)
-4. Navigate to /new
-5. Fill repo name, description, options
-6. Create repository
-7. Verify creation
+GitHub repo creation automation using one of three methods, in order of preference:
+1. GITHUB_TOKEN: Uses the GitHub API directly.
+2. gh CLI: Uses `gh repo create` if the user is authenticated.
+3. CDP Fallback: Uses browser automation, requiring a logged-in session.
 """
 
-import sys, os, subprocess, time, json
+import sys, os, subprocess, time, json, requests
 
 sys.path.insert(0, '/home/hung/.openclaw/workspace/skills/gui-automation')
 from src.cdp_helper import CDPClient
 
 # Config
 REPO_NAME = "clawui-test-repo-" + str(int(time.time()))
-REPO_DESC = "Test repository created via CDP automation"
+REPO_DESC = "Test repository created via automation"
+GITHUB_USER = "longgo1001"
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
+def create_repo_via_api(token, repo_name, repo_desc):
+    """Create a GitHub repo using the API."""
+    log("Attempting to create repo via GitHub API...")
+    url = "https://api.github.com/user/repos"
+    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
+    data = {"name": repo_name, "description": repo_desc, "private": False}
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=15)
+        if response.status_code == 201:
+            log("✅ Repo created successfully via API.")
+            return True
+        else:
+            log(f"❌ API request failed: {response.status_code} {response.text}")
+            return False
+    except requests.RequestException as e:
+        log(f"❌ API request error: {e}")
+        return False
+
+def is_gh_authenticated():
+    """Check if the user is authenticated with the gh CLI."""
+    log("Checking gh auth status...")
+    try:
+        subprocess.run(['gh', 'auth', 'status'], check=True, capture_output=True, text=True, timeout=5)
+        log("✅ gh CLI is authenticated.")
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        log("gh CLI not authenticated or not installed.")
+        return False
+
+def create_repo_via_gh_cli(repo_name, repo_desc):
+    """Create a GitHub repo using the gh CLI."""
+    log("Attempting to create repo via gh CLI...")
+    repo_full_name = f"{GITHUB_USER}/{repo_name}"
+    try:
+        command = ['gh', 'repo', 'create', repo_full_name, '--public', f'--description={repo_desc}']
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=20)
+        log(f"✅ Repo {repo_full_name} created successfully via gh CLI.")
+        return True
+    except subprocess.CalledProcessError as e:
+        log(f"❌ gh repo create failed: {e.stderr.strip()}")
+        return False
+    except FileNotFoundError:
+        log("❌ gh command not found.")
+        return False
+
 def ensure_chromium():
     """Start Chromium with CDP if not running."""
     client = CDPClient()
-    if client.is_available():
-        log("Chromium CDP already available")
-        return client
+    if client.is_available(): return client
     log("Launching Chromium...")
-    subprocess.Popen(['snap', 'run', 'chromium',
-        '--remote-debugging-port=9222',
-        '--remote-allow-origins=*',
-        '--no-first-run',
-        'about:blank'],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.Popen(['snap', 'run', 'chromium', '--remote-debugging-port=9222', '--remote-allow-origins=*', '--no-first-run', 'about:blank'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(10):
         if client.is_available():
             log("Chromium ready")
@@ -43,111 +77,74 @@ def ensure_chromium():
         time.sleep(1)
     raise RuntimeError("Chromium failed to start")
 
-def navigate_and_check_login(client: CDPClient):
-    """Go to GitHub, check if logged in."""
-    client.navigate("https://github.com")
-    time.sleep(3)
-    title = client.get_page_title()
-    log(f"Page: {title}")
-
-    # Look for "Sign in" link or button
-    if "sign in" in title.lower():
-        log("Not logged in. Opening login page...")
-        client.navigate("https://github.com/login")
-        time.sleep(2)
-        log("⚠️  Not logged in. Skipping automation (would need credentials).")
-        return False  # cannot proceed
-    else:
-        log("Already logged in")
-        return True
-
 def create_repo_via_cdp(client: CDPClient):
     """Navigate to new repo page and create."""
     log("Navigating to new repo page...")
     client.navigate("https://github.com/new")
     time.sleep(3)
-
-    # Fill repo name: document.querySelector('input[name="repository[name]"]').value = '...'
     js = f'''
     (function() {{
         const nameInput = document.querySelector('input[name="repository[name]"]');
         if (!nameInput) return "no-name-field";
         nameInput.value = "{REPO_NAME}";
         nameInput.dispatchEvent(new Event('input', {{bubbles:true}}));
-        // Also fill description if field exists
         const descInput = document.querySelector('input[name="repository[description]"], textarea[name="repository[description]"]');
-        if (descInput) {{
-            descInput.value = "{REPO_DESC}";
-            descInput.dispatchEvent(new Event('input', {{bubbles:true}}));
-        }}
-        // Enable public repo (uncheck "Private" if needed)
-        const publicRadio = document.querySelector('input[name="repository[visibility]"]');
-        if (publicRadio) publicRadio.checked = true;
+        if (descInput) {{ descInput.value = "{REPO_DESC}"; descInput.dispatchEvent(new Event('input', {{bubbles:true}})); }}
         return "filled";
     }})()
     '''
-    result = client.evaluate(js)
-    log(f"Form fill result: {result}")
-
-    # Click Create repository button
-    # Wait a bit for any UI updates
+    client.evaluate(js)
     time.sleep(1)
-    click_js = '''
-    (function() {
-        const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim().includes('Create repository'));
-        if (btn) { btn.click(); return "clicked"; }
-        return "not-found";
-    })()
-    '''
-    click_res = client.evaluate(click_js)
-    log(f"Create button click: {click_res}")
-
-    time.sleep(3)  # Wait for redirect
-    current_url = client.get_page_url()
-    log(f"Current URL: {current_url}")
-    return REPO_NAME in current_url
+    click_js = "Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim().includes('Create repository'))?.click()"
+    client.evaluate(click_js)
+    time.sleep(3)
+    return REPO_NAME in client.get_page_url()
 
 def verify_via_git():
     """Verify repo exists via git ls-remote."""
-    repo_url = f"git@github.com:longgo1001/{REPO_NAME}.git"
+    repo_url = f"https://github.com/{GITHUB_USER}/{REPO_NAME}.git"
     log(f"Verifying via git: {repo_url}")
     result = subprocess.run(['git', 'ls-remote', repo_url], capture_output=True, text=True, timeout=10)
-    if result.returncode == 0:
-        log("✅ Repository verified")
-        return True
-    else:
-        log(f"❌ Repo not found: {result.stderr}")
-        return False
+    return result.returncode == 0
 
 def main():
-    log(f"=== GitHub Repo Creation via CDP ===")
+    log(f"=== GitHub Repo Creation ===")
     log(f"Target repository: {REPO_NAME}")
 
+    github_token = os.getenv("GITHUB_TOKEN")
+
+    # Method 1: API Token
+    if github_token:
+        if create_repo_via_api(github_token, REPO_NAME, REPO_DESC) and verify_via_git():
+            log("✅ End-to-End SUCCESS (API)")
+            return 0
+        log("❌ API method failed.")
+        return 1
+
+    # Method 2: gh CLI
+    if is_gh_authenticated():
+        if create_repo_via_gh_cli(REPO_NAME, REPO_DESC) and verify_via_git():
+            log("✅ End-to-End SUCCESS (gh CLI)")
+            return 0
+        log("❌ gh CLI method failed.")
+        return 1
+
+    # Method 3: CDP Fallback
+    log("No token or gh auth found. Falling back to CDP browser automation.")
     try:
         client = ensure_chromium()
-        # Quick check login status; if not logged in, abort gracefully
         client.navigate("https://github.com")
         time.sleep(2)
-        title = client.get_page_title()
-        if "sign in" in title.lower():
-            log("⚠️  Not logged in to GitHub. Please log in first, then re-run.")
-            return 2  # special code for auth needed
-        # Proceed to create repo
-        if create_repo_via_cdp(client):
-            log("✅ Repo created in browser")
-            if verify_via_git():
-                log("✅ End-to-End SUCCESS")
-                return 0
-            else:
-                log("⚠️ Browser created but git verification failed")
-                return 1
-        else:
-            log("❌ Failed to create repo")
-            return 1
+        if "sign in" in client.get_page_title().lower():
+            log("⚠️  Not logged in to GitHub. Please log in or set GITHUB_TOKEN/gh auth.")
+            return 2
+        if create_repo_via_cdp(client) and verify_via_git():
+            log("✅ End-to-End SUCCESS (CDP)")
+            return 0
+        log("❌ CDP method failed.")
+        return 1
     except Exception as e:
-        log(f"❌ Error: {e}")
-        import traceback
-        log(traceback.format_exc())
+        log(f"❌ CDP Error: {e}")
         return 1
 
 if __name__ == "__main__":

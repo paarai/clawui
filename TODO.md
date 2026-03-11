@@ -21,7 +21,7 @@
 
 ## 🔨 In Progress / Partial
 - [x] 集成 CDP/Marionette 到 perception.py 路由层（让 agent 自动感知并选择后端）
-- [ ] 自动登录机制（可选的 GitHub token 注入或重用 gh auth）
+- [x] 自动登录机制（已实现 GITHUB_TOKEN，待 gh auth 集成）
 
 ## 📋 Next Up
 - [x] 响应 GitHub Issues（如有）(Checked at 19:30)
