@@ -1,165 +1,217 @@
-"""
-CDP (Chrome DevTools Protocol) helper for browser automation.
-Connects to a running Chrome/Chromium instance with remote debugging enabled.
-"""
+"""CDP (Chrome DevTools Protocol) backend for browser automation on Wayland."""
 
-import websocket
 import json
+import subprocess
 import time
-from typing import Optional
+import socket
+import http.client
+from typing import Optional, List, Dict, Any
+
 
 class CDPClient:
-    """A basic client for the Chrome DevTools Protocol."""
+    """Simple CDP client using HTTP + WebSocket-free approach (via /json endpoints)."""
 
-    def __init__(self, websocket_url: str):
-        self._ws_url = websocket_url
+    def __init__(self, host: str = "127.0.0.1", port: int = 9222):
+        self.host = host
+        self.port = port
         self._ws = None
-        self._request_id = 0
-        self._responses = {}
 
-    def connect(self):
-        """Connect to the WebSocket."""
+    def _http_get(self, path: str) -> Any:
+        """Make HTTP GET to CDP endpoint."""
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=5)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        data = resp.read().decode()
+        conn.close()
+        return json.loads(data)
+
+    def _http_put(self, path: str, body: str = "") -> Any:
+        conn = http.client.HTTPConnection(self.host, self.port, timeout=5)
+        conn.request("PUT", path, body)
+        resp = conn.getresponse()
+        data = resp.read().decode()
+        conn.close()
+        return json.loads(data) if data else {}
+
+    def is_available(self) -> bool:
+        """Check if CDP endpoint is reachable."""
         try:
-            self._ws = websocket.create_connection(self._ws_url)
-            print("Connected to CDP WebSocket.")
+            self._http_get("/json/version")
+            return True
+        except Exception:
+            return False
+
+    def list_targets(self) -> List[Dict]:
+        """List all browser targets (tabs/pages)."""
+        try:
+            return self._http_get("/json/list")
+        except Exception:
+            return []
+
+    def get_active_tab(self) -> Optional[Dict]:
+        """Get the active/first page target."""
+        targets = self.list_targets()
+        pages = [t for t in targets if t.get("type") == "page"]
+        return pages[0] if pages else None
+
+    def new_tab(self, url: str = "about:blank") -> Optional[Dict]:
+        """Open a new tab."""
+        try:
+            return self._http_put(f"/json/new?{url}")
+        except Exception:
+            return None
+
+    def activate_tab(self, target_id: str) -> bool:
+        """Activate a tab by target ID."""
+        try:
+            self._http_get(f"/json/activate/{target_id}")
+            return True
+        except Exception:
+            return False
+
+    def close_tab(self, target_id: str) -> bool:
+        """Close a tab."""
+        try:
+            self._http_get(f"/json/close/{target_id}")
+            return True
+        except Exception:
+            return False
+
+    def _get_ws_url(self, target_id: Optional[str] = None) -> Optional[str]:
+        """Get WebSocket URL for a target."""
+        if target_id:
+            targets = self.list_targets()
+            tab = next((t for t in targets if t.get("id") == target_id), None)
+        else:
+            tab = self.get_active_tab()
+        if not tab:
+            return None
+        return tab.get("webSocketDebuggerUrl")
+
+    def navigate(self, url: str, target_id: Optional[str] = None) -> bool:
+        """Navigate to URL via CDP."""
+        ws_url = self._get_ws_url(target_id)
+        if not ws_url:
+            return False
+        result = self._send_cdp_command(ws_url, "Page.navigate", {"url": url})
+        return result is not None
+
+    def evaluate(self, expression: str, target_id: Optional[str] = None) -> Any:
+        """Evaluate JavaScript in page."""
+        ws_url = self._get_ws_url(target_id)
+        if not ws_url:
+            return None
+        return self._send_cdp_command(ws_url, "Runtime.evaluate", {"expression": expression})
+
+    def click_element(self, selector: str) -> bool:
+        """Click element by CSS selector."""
+        js = f'document.querySelector("{selector}")?.click()'
+        result = self.evaluate(js)
+        return result is not None
+
+    def type_in_element(self, selector: str, text: str) -> bool:
+        """Type text into element."""
+        # Focus + set value + dispatch events
+        js = f'''
+        (function() {{
+            var el = document.querySelector("{selector}");
+            if (!el) return false;
+            el.focus();
+            el.value = "{text}";
+            el.dispatchEvent(new Event("input", {{bubbles: true}}));
+            el.dispatchEvent(new Event("change", {{bubbles: true}}));
+            return true;
+        }})()
+        '''
+        result = self.evaluate(js)
+        return result is not None
+
+    def get_page_title(self) -> str:
+        """Get current page title."""
+        result = self.evaluate("document.title")
+        if result and isinstance(result, dict):
+            return result.get("result", {}).get("value", "")
+        return ""
+
+    def get_page_url(self) -> str:
+        """Get current page URL."""
+        result = self.evaluate("window.location.href")
+        if result and isinstance(result, dict):
+            return result.get("result", {}).get("value", "")
+        return ""
+
+    def _send_cdp_command(self, ws_url: str, method: str, params: dict = None) -> Any:
+        """Send CDP command via WebSocket (minimal implementation)."""
+        try:
+            import websocket
+            ws = websocket.create_connection(ws_url, timeout=10)
+            msg = {"id": 1, "method": method, "params": params or {}}
+            ws.send(json.dumps(msg))
+            response = json.loads(ws.recv())
+            ws.close()
+            return response.get("result")
+        except ImportError:
+            # Fallback: use subprocess with websocat if available
+            return self._send_via_websocat(ws_url, method, params)
         except Exception as e:
-            print(f"Failed to connect to CDP: {e}")
-            raise
+            return None
 
-    def close(self):
-        """Close the WebSocket connection."""
-        if self._ws:
-            self._ws.close()
-            self._ws = None
-            print("CDP connection closed.")
+    def _send_via_websocat(self, ws_url: str, method: str, params: dict = None) -> Any:
+        """Fallback: use websocat CLI for WebSocket."""
+        msg = json.dumps({"id": 1, "method": method, "params": params or {}})
+        try:
+            result = subprocess.run(
+                ['websocat', '-1', ws_url],
+                input=msg, capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0 and result.stdout:
+                return json.loads(result.stdout).get("result")
+        except Exception:
+            pass
+        return None
 
-    def _send_request(self, method: str, params: Optional[dict] = None) -> int:
-        """Send a request to the browser."""
-        if not self._ws:
-            raise ConnectionError("Not connected to CDP.")
-        self._request_id += 1
-        req_id = self._request_id
-        request = {
-            "id": req_id,
-            "method": method,
-            "params": params or {}
-        }
-        self._ws.send(json.dumps(request))
-        return req_id
 
-    def _wait_for_response(self, request_id: int, timeout: int = 5) -> dict:
-        """Wait for a response to a specific request."""
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            try:
-                message = self._ws.recv()
-                response = json.loads(message)
-                if "id" in response and response["id"] == request_id:
-                    return response.get("result", {})
-                # Store other messages if needed later
-            except websocket.WebSocketTimeoutException:
-                continue
-            except Exception as e:
-                print(f"Error receiving CDP message: {e}")
-                break
-        raise TimeoutError(f"Timeout waiting for response to request {request_id}")
+def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> subprocess.Popen:
+    """Launch Chromium with remote debugging enabled."""
+    # Try multiple browser names
+    for browser in ['chromium-browser', 'chromium', 'google-chrome', 'google-chrome-stable']:
+        try:
+            proc = subprocess.Popen([
+                browser,
+                f'--remote-debugging-port={port}',
+                '--remote-allow-origins=*',
+                '--no-first-run',
+                '--no-default-browser-check',
+                url
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(3)  # Wait for browser to start
+            return proc
+        except FileNotFoundError:
+            continue
+    return None
 
-    def navigate(self, url: str) -> dict:
-        """Navigate to a URL."""
-        req_id = self._send_request("Page.navigate", {"url": url})
-        return self._wait_for_response(req_id)
 
-    def get_document(self) -> dict:
-        """Get the root document node."""
-        req_id = self._send_request("DOM.getDocument", {"depth": -1})
-        return self._wait_for_response(req_id)
+def launch_firefox_with_marionette(port: int = 2828) -> subprocess.Popen:
+    """Launch Firefox with Marionette enabled."""
+    try:
+        proc = subprocess.Popen([
+            'firefox', '--marionette', f'--marionette-port={port}'
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(3)
+        return proc
+    except FileNotFoundError:
+        return None
 
-    def query_selector(self, node_id: int, selector: str) -> dict:
-        """Query for a node using a CSS selector."""
-        req_id = self._send_request("DOM.querySelector", {"nodeId": node_id, "selector": selector})
-        return self._wait_for_response(req_id)
 
-    def get_box_model(self, node_id: int) -> dict:
-        """Get the box model for a node to find its coordinates."""
-        req_id = self._send_request("DOM.getBoxModel", {"nodeId": node_id})
-        return self._wait_for_response(req_id)
-
-    def click(self, x: int, y: int):
-        """Simulate a mouse click at coordinates."""
-        self._send_request("Input.dispatchMouseEvent", {
-            "type": "mousePressed",
-            "x": x,
-            "y": y,
-            "button": "left",
-            "clickCount": 1
-        })
-        time.sleep(0.05)
-        self._send_request("Input.dispatchMouseEvent", {
-            "type": "mouseReleased",
-            "x": x,
-            "y": y,
-            "button": "left",
-            "clickCount": 1
-        })
-
-    def type_text(self, text: str):
-        """Simulate typing text."""
-        for char in text:
-            self._send_request("Input.dispatchKeyEvent", {
-                "type": "char",
-                "text": char
-            })
-            time.sleep(0.02)
-
-def find_chromium_and_get_cdp_url() -> Optional[str]:
-    """
-    Find a running Chromium instance with remote debugging and get its CDP WebSocket URL.
-    This is a placeholder. A real implementation would need to parse /json/version endpoint.
-    """
-    # This would typically involve an HTTP request to http://localhost:9222/json/version
-    # For now, we'll hardcode a common URL for simplicity.
-    # In a real scenario, you'd launch chromium with:
-    # chromium-browser --remote-debugging-port=9222
-    
-    # Placeholder URL
-    return "ws://localhost:9222/devtools/browser/some-uuid"
-
-if __name__ == '__main__':
-    # Example usage - this part is for demonstration and testing
-    
-    # In a real script, you'd get this URL dynamically
-    # url = find_chromium_and_get_cdp_url()
-    # if not url:
-    #     print("Could not find a debuggable Chromium instance.")
-    #     print("Launch with: chromium-browser --remote-debugging-port=9222")
-    #     sys.exit(1)
-        
-    # client = CDPClient(url)
-    # try:
-    #     client.connect()
-    #     client.navigate("https://github.com/new")
-    #     time.sleep(2)
-        
-    #     doc = client.get_document()
-    #     root_node_id = doc['root']['nodeId']
-        
-    #     # Find repo name input field
-    #     repo_name_node = client.query_selector(root_node_id, 'input[name="repository[name]"]')
-    #     if 'nodeId' in repo_name_node:
-    #         node_id = repo_name_node['nodeId']
-    #         box = client.get_box_model(node_id)
-    #         content = box['model']['content']
-    #         # Click in the middle of the input field
-    #         click_x = content[0] + (content[2] - content[0]) / 2
-    #         click_y = content[1] + (content[5] - content[1]) / 2
-    #         client.click(int(click_x), int(click_y))
-    #         time.sleep(0.5)
-    #         client.type_text("test-repo-via-cdp")
-    #     else:
-    #         print("Could not find repository name input field.")
-
-    # finally:
-    #     client.close()
-    
-    print("CDP helper structure created. Needs websocket-client library and a running Chromium with remote debugging.")
-    pass
+def get_or_create_cdp_client(port: int = 9222) -> Optional[CDPClient]:
+    """Get existing CDP connection or launch browser."""
+    client = CDPClient(port=port)
+    if client.is_available():
+        return client
+    # Try launching Chromium
+    proc = launch_chromium_with_cdp(port=port)
+    if proc:
+        time.sleep(2)
+        if client.is_available():
+            return client
+    return None
