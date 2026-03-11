@@ -82,6 +82,7 @@
 ## 最新交付物 (2026-03-11)
 - `projects/gui-automation/demos/browser_form_demo.py` — 展示全部 11 个 CDP 工具的综合演示
 - `projects/gui-automation/demos/github_repo_creation.py` — 端到端 GitHub 仓库创建（需已登录 Chromium）
+- `projects/gui-automation/demos/google_signup_demo.py` — **新**：Google 注册流程自动化（完整表单填写至手机验证前）
 - `projects/gui-automation/tools/check_issues.py` — 监控 GitHub issues，可集成到 cron
 - `projects/gui-automation/tools/start_chromium_with_profile.py` — 使用已有 Chromium profile 启动，保留登录态
 - README 更新：CDP 使用指南、演示说明、解决登录问题的启动脚本
