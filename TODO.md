@@ -22,6 +22,9 @@
 - [x] 完善 README 使用示例（添加 X11 使用说明）
 - [x] 配置 git 凭据以推送仓库（SSH key 已添加，推送成功）
 - [ ] 实现 CDP 后端支持 Chromium 浏览器
+  - [x] 创建 cdp_helper.py 结构
+  - [ ] 实现动态获取 WebSocket URL
+  - [ ] 集成到 perception.py
 - [ ] 实现 Marionette 后端支持 Firefox
 - [ ] 重构 backends.py 支持工具选择（未来工作）
 
