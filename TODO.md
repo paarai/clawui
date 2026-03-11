@@ -24,7 +24,7 @@
 - [ ] 自动登录机制（可选的 GitHub token 注入或重用 gh auth）
 
 ## 📋 Next Up
-- [ ] 响应 GitHub Issues（如有）
+- [x] 响应 GitHub Issues（如有）(Checked at 18:31)
 - [x] 完善 README：添加故障排除和最佳实践
 - [ ] 测试 Firefox Marionette（需启动 firefox --marionette --marionette-port 2828）
 
