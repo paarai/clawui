@@ -92,7 +92,10 @@ def _get_cdp_client() -> Optional['CDPClient']:
         return _cdp_client
     # Try reconnecting
     try:
-        from src.cdp_helper import CDPClient
+        try:
+            from .cdp_helper import CDPClient
+        except ImportError:
+            from src.cdp_helper import CDPClient
         _cdp_client = CDPClient()
         CDP_AVAILABLE = _cdp_client.is_available()
         return _cdp_client if CDP_AVAILABLE else None
