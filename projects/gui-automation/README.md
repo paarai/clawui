@@ -169,10 +169,17 @@ Automatically launched by OpenClaw skill with:
 chromium --remote-debugging-port=9222 --remote-allow-origins="*"
 ```
 
-To run standalone:
+To run standalone with your existing logged-in profile:
+```bash
+python3 tools/start_chromium_with_profile.py
+```
+This script detects your Chromium/Chrome profile and starts CDP-enabled browser reusing it, so you stay logged into sites like GitHub.
+
+To run manually:
 ```bash
 snap run chromium --remote-debugging-port=9222 --remote-allow-origins="*" &
 ```
+(For best results with site logins, reuse your daily browser profile as above.)
 
 ## Project Structure
 
