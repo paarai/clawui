@@ -83,6 +83,25 @@ except Exception:
         _cdp_client = None
         print(f"[WARN] CDP not available: {e}", file=sys.stderr)
 
+# Marionette backend (Firefox)
+try:
+    from .marionette_helper import MarionetteClient
+    _marionette_client = MarionetteClient()
+    MARIONETTE_AVAILABLE = _marionette_client._connect()
+    if MARIONETTE_AVAILABLE:
+        _marionette_client._disconnect()
+except Exception:
+    try:
+        from src.marionette_helper import MarionetteClient
+        _marionette_client = MarionetteClient()
+        MARIONETTE_AVAILABLE = _marionette_client._connect()
+        if MARIONETTE_AVAILABLE:
+            _marionette_client._disconnect()
+    except Exception as e:
+        MARIONETTE_AVAILABLE = False
+        _marionette_client = None
+        print(f"[WARN] Marionette not available: {e}", file=sys.stderr)
+
 
 def _get_cdp_client() -> Optional['CDPClient']:
     """Get CDP client, re-checking availability if needed."""
@@ -104,8 +123,41 @@ def _get_cdp_client() -> Optional['CDPClient']:
         return None
 
 
+def _get_marionette_client() -> Optional['MarionetteClient']:
+    """Get Marionette client for Firefox, re-checking availability."""
+    global MARIONETTE_AVAILABLE, _marionette_client
+    if _marionette_client:
+        try:
+            if _marionette_client._connect():
+                _marionette_client._disconnect()
+                MARIONETTE_AVAILABLE = True
+                return _marionette_client
+        except:
+            pass
+    # Try reconnecting
+    try:
+        try:
+            from .marionette_helper import MarionetteClient
+        except ImportError:
+            from src.marionette_helper import MarionetteClient
+        _marionette_client = MarionetteClient()
+        if _marionette_client._connect():
+            _marionette_client._disconnect()
+            MARIONETTE_AVAILABLE = True
+            return _marionette_client
+    except:
+        pass
+    MARIONETTE_AVAILABLE = False
+    return None
+
+
+def _is_firefox(app_name: str) -> bool:
+    """Check if app is Firefox (best served by Marionette)."""
+    return 'firefox' in app_name.lower()
+
+
 def _is_browser_app(app_name: str) -> bool:
-    """Check if app is a browser (best served by CDP)."""
+    """Check if app is a Chromium-based browser (best served by CDP)."""
     browsers = {'chromium', 'chrome', 'brave', 'edge'}
     return any(b in app_name.lower() for b in browsers)
 
@@ -217,11 +269,16 @@ def get_ui_tree_summary(app_name: Optional[str] = None, max_depth: int = 5) -> s
     """
     # Specific app request
     if app_name:
-        # Browser apps: prefer CDP for rich page info
+        # Chromium-based: prefer CDP
         if _is_browser_app(app_name):
             cdp = _get_cdp_client()
             if cdp:
                 return _get_cdp_summary(cdp, detailed=True)
+        # Firefox: prefer Marionette
+        if _is_firefox(app_name):
+            mario = _get_marionette_client()
+            if mario:
+                return _get_marionette_summary(mario)
         if _is_xwayland_app(app_name) and X11_AVAILABLE:
             return x11_tree(app_name=app_name)[0]
         elif ATSPI_AVAILABLE:
