@@ -103,6 +103,15 @@ def create_tools():
         {"name": "cdp_activate_tab", "description": "Switch to a browser tab by target ID", "input_schema": {"type": "object", "properties": {"target_id": {"type": "string"}}, "required": ["target_id"]}},
         {"name": "cdp_close_tab", "description": "Close a browser tab by target ID", "input_schema": {"type": "object", "properties": {"target_id": {"type": "string"}}, "required": ["target_id"]}},
         {"name": "cdp_screenshot", "description": "Take a screenshot of the browser page", "input_schema": {"type": "object", "properties": {}}},
+        # Marionette tools (Firefox automation)
+        {"name": "ff_navigate", "description": "Navigate Firefox to URL (requires firefox --marionette)", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
+        {"name": "ff_click", "description": "Click element by CSS selector in Firefox", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"]}},
+        {"name": "ff_type", "description": "Type text into element in Firefox", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}, "text": {"type": "string"}}, "required": ["selector", "text"]}},
+        {"name": "ff_eval", "description": "Execute JavaScript in Firefox", "input_schema": {"type": "object", "properties": {"script": {"type": "string"}}, "required": ["script"]}},
+        {"name": "ff_page_info", "description": "Get Firefox page title and URL", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "ff_screenshot", "description": "Take a screenshot of Firefox page", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "ff_list_tabs", "description": "List Firefox tabs/windows", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "ff_switch_tab", "description": "Switch Firefox tab by handle", "input_schema": {"type": "object", "properties": {"handle": {"type": "string"}}, "required": ["handle"]}},
     ]
 
 
