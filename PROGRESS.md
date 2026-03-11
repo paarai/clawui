@@ -19,6 +19,7 @@
 - **✅ Multi-Backend Architecture**: Designed for future autonomous operation with models like Claude, GPT-4o, Gemini, and Ollama.
 - **✅ OpenClaw Integration**: Packaged as a ready-to-use skill (`SKILL.md`).
 - **✅ Environment Hardening**: Resolved issues related to Wayland, `ydotool` permissions, and disabled Apport crash reports to ensure smooth operation.
+- **✅ Cross-Compatibility Research**: Investigated and resolved AT-SPI incompatibility with XWayland applications. The chosen solution is a multi-backend architecture, enabling native automation for Wayland (AT-SPI), X11/XWayland (`xdotool`), and browsers (CDP/Marionette).
 - **✅ Skill Loading**: Fixed a critical bug where the skill was not loaded due to being a symlink. The skill is now correctly located in the `skills` directory.
 
 ## Remaining Tasks

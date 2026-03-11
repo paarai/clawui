@@ -4,7 +4,8 @@
 import sys
 import argparse
 from src.agent import run_agent
-from src.atspi_helper import list_applications, get_ui_tree_summary
+# Use unified perception layer
+from src.perception import list_applications, get_ui_tree_summary
 from src.screenshot import take_screenshot
 
 

@@ -71,6 +71,127 @@ focus_window(name="Firefox")
 img_b64 = take_screenshot()
 ```
 
+## Workflow Examples
+
+Here are some practical, end-to-end examples of how to use the skill's Python API to automate common tasks.
+
+### Example 1: Write and Save a Text File in Gedit
+
+This workflow opens the `gedit` text editor, writes some text, and saves the file to the desktop.
+
+```python
+import sys
+import subprocess
+import time
+import os
+
+# Add the skill to the Python path
+sys.path.insert(0, '/home/hung/.openclaw/workspace/skills/gui-automation')
+
+from src.atspi_helper import find_elements, do_action, set_text
+from src.actions import type_text, press_key
+
+# 1. Open Gedit
+print("Opening Gedit...")
+subprocess.Popen(["gedit"], start_new_session=True)
+time.sleep(3)  # Wait for the application to load
+
+# 2. Type some text into the editor window
+print("Typing text...")
+type_text("Hello from your AI assistant!\n\nThis file was created automatically.")
+time.sleep(1)
+
+# 3. Press Ctrl+S to open the 'Save' dialog
+print("Opening save dialog...")
+press_key("ctrl+s")
+time.sleep(2)  # Wait for the dialog to appear
+
+# 4. In the save dialog, type the filename
+# The text entry field in the GNOME save dialog is often named 'Name'
+print("Typing filename...")
+save_dialog_entry = find_elements(app_name="gedit", role="text", name="Name")
+if save_dialog_entry:
+    set_text(save_dialog_entry[0], "automated_notes.txt")
+else:
+    # Fallback if the element isn't found by name
+    type_text("automated_notes.txt")
+time.sleep(1)
+
+# 5. Find and click the 'Save' button
+print("Clicking save button...")
+save_button = find_elements(app_name="gedit", role="push button", name="Save")
+if save_button:
+    do_action(save_button[0], "click")
+else:
+    # Fallback: press Enter if button not found
+    press_key("Return")
+
+print("Workflow complete. File should be saved.")
+
+# Optional: Clean up by closing the app
+# press_key("alt+F4")
+
+```
+
+### Example 2: Perform a Calculation in GNOME Calculator
+
+This workflow opens `gnome-calculator`, clicks buttons to perform `123 + 456`, and reads the result.
+
+```python
+import sys
+import subprocess
+import time
+
+# Add the skill to the Python path
+sys.path.insert(0, '/home/hung/.openclaw/workspace/skills/gui-automation')
+
+from src.atspi_helper import find_elements, do_action, get_ui_tree_summary
+
+# 1. Open Calculator
+print("Opening Calculator...")
+subprocess.Popen(["gnome-calculator"], start_new_session=True)
+time.sleep(3) # Wait for app to load
+
+# 2. Define a helper function to click calculator buttons
+def click_button(name):
+    print(f"Clicking button: {name}")
+    elements = find_elements(app_name="gnome-calculator", role="push button", name=name)
+    if elements:
+        do_action(elements[0], "click")
+        time.sleep(0.5)
+    else:
+        print(f"  - Button '{name}' not found!")
+
+# 3. Click the buttons for "123 + 456 ="
+click_button("1")
+click_button("2")
+click_button("3")
+click_button("Plus") # The '+' button is named "Plus"
+click_button("4")
+click_button("5")
+click_button("6")
+click_button("Equals") # The '=' button is named "Equals"
+time.sleep(1)
+
+# 4. Find the result display and print its value
+# The display is often a 'label' with the name 'main display' or similar
+print("Reading result...")
+display = find_elements(app_name="gnome-calculator", role="label", name="main display")
+if display:
+    # The result is in the 'name' property of the label element
+    result = display[0].get_name()
+    print(f"Calculation result: {result}") # Should be "579"
+else:
+    print("  - Could not find result display.")
+    # As a fallback, you could take a screenshot and use OCR
+    # from src.screenshot import take_screenshot
+    # img_b64 = take_screenshot()
+    # print("Took screenshot as fallback.")
+
+print("Workflow complete.")
+
+```
+
 ## Strategy: AT-SPI vs Screenshot
 
 - **Prefer AT-SPI first**: It provides element names, roles, and coordinates; fast and precise.
