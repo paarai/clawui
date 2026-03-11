@@ -65,7 +65,7 @@ def method_gh_cli():
         return False, f"gh CLI not available or not authenticated: {e}"
 
 def method_cdp_fallback():
-    """Use CDP to navigate and screenshot the issues page."""
+    """Use CDP to navigate, screenshot, and vision-extract issues."""
     try:
         from src.cdp_helper import CDPClient
     except ImportError as e:
@@ -104,9 +104,28 @@ def method_cdp_fallback():
         png = base64.b64decode(b64)
         with open(screenshot_path, "wb") as f:
             f.write(png)
-        print(f"CDP fallback saved screenshot: {screenshot_path}")
-        print("Screenshot saved for manual review (no auth required).")
-        return True, "CDP screenshot saved"
+        print(f"CDP fallback: screenshot saved to {screenshot_path}")
+
+        # Attempt vision-based extraction
+        try:
+            from src.vision_backend import VisionBackend
+            vb = VisionBackend()
+            prompt = "List all open GitHub issues from this screenshot. For each issue, output exactly: '#<number>: <title>' on its own line. If none, say 'No open issues.'"
+            messages = [
+                {"role": "user", "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": vb._encode_image(b64)}}
+                ]}
+            ]
+            resp = vb.chat(messages, tools=[], system="You are a helpful assistant that extracts issue data from GitHub screenshots.")
+            text = resp.get("text", "").strip()
+            print("Vision analysis of issues page:")
+            print(text)
+            return True, "CDP+vision extracted issues"
+        except Exception as e:
+            print(f"Vision extraction failed: {e}")
+            print("Falling back to manual screenshot review.")
+            return True, "CDP screenshot only (vision failed)"
     except Exception as e:
         return False, f"CDP error: {e}"
 
