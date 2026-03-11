@@ -59,3 +59,12 @@
   - `tools/check_issues.py` (监控 GitHub issues)
   - `tools/start_chromium_with_profile.py` (使用已有 Profile 启动，保留登录态)
 - README 已更新，包含了故障排除和最佳实践。
+
+## 框架验证与发现 (2026-03-11)
+- **Google 注册自动化实测**：
+  - 成功自动化完整流程：姓名 → 生日/性别 → 用户名 → 密码 → 手机验证
+  - 验证了框架处理复杂多页表单、自定义 UI 组件（combobox、radio）、动态页面的能力
+  - 发现硬限制：Google 反机器人检测（升级为二维码验证），注册被拦截
+  - 技术教训：
+    - `cdp.evaluate()` 返回 `{'result':{'type','value'}}`，取值需使用 `.get('result',{}).get('value','')`
+    - 现代网页 DOM 完全自定义，不能依赖猜测的选择器，必须检查实际结构
