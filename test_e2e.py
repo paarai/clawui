@@ -10,6 +10,7 @@ log = logging.info
 sys.path.insert(0, '/home/hung/.openclaw/workspace/skills/gui-automation')
 from src.x11_helper import list_windows, find_windows_by_class, activate_window
 from src.cdp_helper import CDPClient, get_or_create_cdp_client
+from src.marionette_helper import MarionetteClient
 
 def test_atspi():
     log("=== AT-SPI Test ===")
@@ -48,11 +49,34 @@ def test_cdp():
     log(f"Page: {title} @ {url}")
     return "github" in (title + url).lower()
 
+def test_marionette():
+    log("=== Marionette Test ===")
+    client = MarionetteClient()
+    if not client.is_available():
+        log("Marionette not available (is Firefox running with --marionette?)")
+        return False
+    session = client.new_session()
+    if not session:
+        log("Failed to create Marionette session")
+        return False
+    ok = client.navigate("https://example.com")
+    time.sleep(2)
+    title = client.get_title()
+    url = client.get_url()
+    log(f"Page: {title} @ {url}")
+    ok = ok and ("example" in (title + url).lower())
+    try:
+        client.close_window()
+    except Exception:
+        pass
+    return ok
+
 def main():
     results = [
         ("AT-SPI", test_atspi()),
         ("X11", test_x11()),
         ("CDP", test_cdp()),
+        ("Marionette", test_marionette()),
     ]
     log("\n=== Summary ===")
     for name, ok in results:

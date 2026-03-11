@@ -26,7 +26,7 @@
 ## 📋 Next Up
 - [x] 响应 GitHub Issues（如有）(Checked at 18:31)
 - [x] 完善 README：添加故障排除和最佳实践
-- [ ] 测试 Firefox Marionette（需启动 firefox --marionette --marionette-port 2828）
+- [x] 测试 Firefox Marionette（已通过端到端测试验证）
 
 ---
 Last updated: 2026-03-11 16:35 (GMT+8)
