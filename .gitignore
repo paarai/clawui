@@ -48,3 +48,6 @@ build/
 
 # Project-specific
 projects/*/gui-automation  # symlink to skills version, don't commit
+
+# Generated artifacts
+screenshots/
