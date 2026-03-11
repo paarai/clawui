@@ -60,6 +60,20 @@
   - 坐标点击依赖于窗口尺寸和位置
 - **成果**：已发布到 GitHub，创建演示脚本 `demos/browser_form_demo.py`
 
+## Marionette (Firefox) 自动化（2026-03-16 实现）
+- **目标**：无缝支持 Firefox 浏览器自动化，作为 CDP 的互补
+- **核心实现**：
+  - `marionette_helper.py`：基于 TCP 的 Marionette 协议客户端（WebDriver JSON 协议子集）
+  - `marionette_backend.py`：后端抽象，会话管理、导航、定位、点击、键盘、截图、多标签
+  - `agent.py`：暴露 8 个 Firefox 工具
+- **使用**：启动 Firefox 时添加 `--marionette --marionette-port 2828`（当前版本默认启用 Marionette 但使用 Unix socket；可通过环境调整）
+- **状态**：核心协议完成，待实际场景测试
+
+## 录制/回放
+- **模块**：`src/recorder.py`
+- **功能**：记录所有工具调用（工具名、输入参数、结果）到 JSON 文件；可回放（dry-run 模式预览）
+- **集成**：可选，需要时在 agent 中安装记录器实例
+
 ## 工具与流程
 - **CRON 自动改进**：配置了每 30 分钟运行的 isolated 会话（9f3a29ee），持续推动 TODO 中的任务，无需人工干预
 - **编辑策略**：对于大型配置文件（如 TODO.md），`edit` 的精确匹配容易失败；改用 `write` 重写更可靠
