@@ -42,6 +42,29 @@
   - 现状：GNOME 原生应用（设置、文件等）继续走 AT-SPI；v2rayN 等 XWayland 应用可被 X11 后端识别；Firefox 检测需要后续优化
   - GitHub 仓库已发布：https://github.com/longgo1001/clawui.git
 
+## CDP 浏览器自动化（2026-03-11 持续改进）
+- **目标**：使 Chromium 浏览器自动化可靠、通用，供 OpenClaw agent 调用
+- **核心实现**：
+  - `cdp_helper.py`：CDPClient 封装 HTTP + WebSocket 命令
+  - `cdp_backend.py`：后端抽象，提供 `type_in_element`, `click_at`, `press_key`, `take_screenshot` 等
+  - `agent.py`：暴露 11 个 CDP 工具
+- **关键技术决策**：
+  - 使用 `Input.dispatchKeyEvent` 替代 `el.value` 直接赋值——对自定义表单组件（下拉、单选）更有效
+  - `type_text()` 先执行 `el.click()` + `el.focus()` 再按键，避免丢失焦点
+  - `activate_tab` / `close_tab` 改用原始 HTTP 请求（避免 JSON 解析错误，因为端点返回纯文本）
+  - 新增 `cdp_click_at(x,y)` 用于无法通过 CSS 选择器定位的 UI（如日期选择器）
+  - `take_screenshot()` 基于 `Page.captureScreenshot`，返回 base64 PNG
+- **当前状态**：所有 11 个 CDP 工具已验证可用，包括多标签页列表、新建、切换、关闭
+- **已知限制**：
+  - 自动登录 GitHub/Google 仍需要已有会话或手动处理 2FA；Для完全自动化可预置 GitHub token 但存在安全风险
+  - 坐标点击依赖于窗口尺寸和位置
+- **成果**：已发布到 GitHub，创建演示脚本 `demos/browser_form_demo.py`
+
+## 工具与流程
+- **CRON 自动改进**：配置了每 30 分钟运行的 isolated 会话（9f3a29ee），持续推动 TODO 中的任务，无需人工干预
+- **编辑策略**：对于大型配置文件（如 TODO.md），`edit` 的精确匹配容易失败；改用 `write` 重写更可靠
+- **测试方法**：演样例子的 CDP 工具组合（导航→填表→截图→多标签切换）作为功能验收标准
+
 ## 技能状态
 - `gui-automation` - 已就绪，本地加载成功（无需发布到 clawhub）
 - `ddg-web-search` - 已安装
