@@ -168,6 +168,48 @@ def _is_xwayland_app(app_name: str) -> bool:
     return any(x in app_name.lower() for x in xwayland_apps)
 
 
+def _get_marionette_summary(mario: 'MarionetteClient') -> str:
+    """Get Firefox browser state summary via Marionette."""
+    try:
+        from .marionette_backend import MarionetteBackend
+    except ImportError:
+        from src.marionette_backend import MarionetteBackend
+    try:
+        backend = MarionetteBackend()
+        # Get current page info
+        url = backend.get_url() if hasattr(backend, 'get_url') else "unknown"
+        title = backend.get_title() if hasattr(backend, 'get_title') else "unknown"
+        lines = ["Firefox (Marionette):", f"  Title: {title}", f"  URL: {url}"]
+        # Try to get page source summary
+        try:
+            result = backend.execute_script('''
+                var els = document.querySelectorAll('input,select,textarea,button,[role=button]');
+                var items = [];
+                for (var i = 0; i < Math.min(els.length, 30); i++) {
+                    var el = els[i];
+                    items.push({
+                        tag: el.tagName.toLowerCase(),
+                        type: el.type || '',
+                        name: el.name || el.id || '',
+                        text: (el.textContent || el.value || '').substring(0,50).trim()
+                    });
+                }
+                return JSON.stringify(items);
+            ''')
+            if result:
+                elements = json.loads(result) if isinstance(result, str) else result
+                if elements:
+                    lines.append(f"  Interactive elements ({len(elements)}):")
+                    for el in elements:
+                        name = el.get("name") or el.get("text", "")[:30]
+                        lines.append(f"    <{el['tag']}> type={el.get('type','')} name=\"{name}\"")
+        except:
+            pass
+        return "\n".join(lines)
+    except:
+        return "Firefox (Marionette): connected but unable to get page info"
+
+
 def _get_cdp_summary(cdp: 'CDPClient', detailed: bool = False) -> str:
     """Get a summary of browser state via CDP.
     
@@ -257,6 +299,10 @@ def list_applications() -> List[str]:
         pages = [t for t in tabs if t.get("type") == "page"]
         if pages:
             apps.append(f"Chromium ({len(pages)} tabs)")
+    # Add Marionette Firefox info
+    mario = _get_marionette_client()
+    if mario:
+        apps.append("Firefox (Marionette)")
     # Deduplicate
     return sorted(set(apps))
 
@@ -308,7 +354,16 @@ def get_ui_tree_summary(app_name: Optional[str] = None, max_depth: int = 5) -> s
         try:
             cdp_summary = _get_cdp_summary(cdp)
             if cdp_summary:
-                parts.append("=== CDP (Browser) ===\n" + cdp_summary)
+                parts.append("=== CDP (Chromium) ===\n" + cdp_summary)
+        except:
+            pass
+    # Marionette: include Firefox info
+    mario = _get_marionette_client()
+    if mario:
+        try:
+            mario_summary = _get_marionette_summary(mario)
+            if mario_summary:
+                parts.append("=== Marionette (Firefox) ===\n" + mario_summary)
         except:
             pass
 
