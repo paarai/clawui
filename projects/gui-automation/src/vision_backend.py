@@ -8,7 +8,7 @@ import time
 from typing import Optional, List, Dict, Any
 
 import httpx
-from .backends import AIBackend, FALLBACK_MODEL
+from .backends import AIBackend
 
 # Optional: httpx for async; we use sync
 

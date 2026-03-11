@@ -191,6 +191,12 @@ class MarionetteClient:
         result = self._send("WebDriver:CloseWindow", {})
         return result is not None
 
+    def quit(self) -> bool:
+        """Quit the browser entirely (ends session and closes browser)."""
+        result = self._send("WebDriver:Quit", {})
+        self.close()
+        return result is not None
+
     def close(self):
         """Close the connection."""
         if self._sock:
@@ -209,10 +215,17 @@ def get_or_create_marionette_client(port: int = 2828) -> Optional[MarionetteClie
 
     # Try to start Firefox with Marionette
     try:
-        display = os.environ.get("DISPLAY", ":0")
+        display = os.environ.get("DISPLAY")
+        args = ["firefox", "--marionette", "--no-remote"]
+        env = os.environ.copy()
+        if not display:
+            # No display available, run headless
+            args.append("--headless")
+        else:
+            env["DISPLAY"] = display
         subprocess.Popen(
-            ["firefox", "--marionette", "--no-remote"],
-            env={**os.environ, "DISPLAY": display},
+            args,
+            env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
         # Wait for Marionette to become available
