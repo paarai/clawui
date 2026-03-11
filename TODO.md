@@ -44,3 +44,15 @@
 
 Last checked: 2026-03-11 08:15 (GMT+8)
 Next check: cron trigger (every 30 minutes)
+## Recent Progress (2026-03-11 15:40)
+- CDP 真实键盘输入 (Input.dispatchKeyEvent) 完成
+- 新增坐标点击 (cdp_click_at)
+- agent 支持 6 个 CDP 工具
+- 注册了持续改进的 cron 任务 (每30分钟)
+
+## Next Priorities
+- [ ] 实现多标签页切换 (Target.activateTarget)
+- [ ] 实现 cdp_screenshot 获取浏览器内部画面
+- [ ] 编写 README (安装、使用示例)
+- [ ] 完成端到端脚本 (GitHub 仓库自动创建)
+- [ ] 检查并响应 GitHub Issues
