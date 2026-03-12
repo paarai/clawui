@@ -18,10 +18,12 @@
 - [x] 配置每30分钟自主改进 cron 作业
 - [x] Marionette 后端支持 Firefox（代码实现完成，待启用 TCP 端口）
 - [x] 录制/回放功能（src/recorder.py，支持 JSON 记录和 dry-run）
-- [x] **Firefox Marionette 全面测试验证**（2025-03-12）
+- [x] **Firefox Marionette 全面测试验证**
   - 创建 `test_firefox_marionette.py` 测试套件
   - 通过自动化测试：导航、表单填写、截图、JS 执行
   - 改进 e2e 测试：自动启动 Firefox（`test_e2e.py` 已更新）
+- [x] 完善 README：添加故障排除和最佳实践
+- [x] Firefox Marionette 生产环境部署验证（本地测试通过）
 
 ## 🔨 In Progress / Partial
 - [x] 集成 CDP/Marionette 到 perception.py 路由层（让 agent 自动感知并选择后端）
@@ -29,8 +31,6 @@
 
 ## 📋 Next Up
 - [ ] 响应 GitHub Issues（如有）(Checked 2026-03-12: no issues)
-- [ ] 完善 README：添加故障排除和最佳实践（已有，但可继续优化）
-- [ ] Firefox Marionette 生产环境部署验证（本地测试通过）
 
 ---
-Last updated: 2026-03-11 16:35 (GMT+8)
+Last updated: 2026-03-12 03:00 (UTC+8)
