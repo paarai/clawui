@@ -29,6 +29,7 @@
 - **目标**: 使 Chromium 浏览器自动化可靠、通用。
 - **实现**: `cdp_helper.py` (协议) + `cdp_backend.py` (抽象) + 11个 agent 工具。
 - **关键技术**: 使用 `Input.dispatchKeyEvent` 模拟真实键盘输入，用坐标点击 `dispatch_mouse` 处理自定义UI组件，通过原始HTTP请求管理标签页，保证了对现代网页（如Google登录页）的兼容性。
+- **持久化支持**: 新增 `DEFAULT_USER_DATA_DIR` 配置，自动使用持久 Chromium 配置文件，保留登录态、Cookie 和设置，适用于生产自动化。
 
 ### Marionette (Firefox) 自动化
 - **目标**: 作为 CDP 的互补，支持 Firefox。
