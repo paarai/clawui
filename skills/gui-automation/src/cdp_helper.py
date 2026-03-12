@@ -1,11 +1,22 @@
 """CDP (Chrome DevTools Protocol) backend for browser automation on Wayland."""
 
+import base64
 import json
+import os
 import subprocess
 import time
 import socket
 import http.client
 from typing import Optional, List, Dict, Any
+
+# Default persistent profile directory for auto-launched Chromium
+DEFAULT_USER_DATA_DIR = os.path.join(
+    os.path.expanduser("~"),
+    ".local",
+    "share",
+    "clawui",
+    "chromium_profile"
+)
 
 
 class CDPClient:
