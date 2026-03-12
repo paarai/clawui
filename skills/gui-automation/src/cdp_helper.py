@@ -259,12 +259,16 @@ def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> Opti
 
     Returns the Popen object if successful, None otherwise.
     """
+    # Ensure the persistent profile directory exists
+    os.makedirs(DEFAULT_USER_DATA_DIR, exist_ok=True)
+
     # Base arguments common to all launches
     base_args = [
         f'--remote-debugging-port={port}',
         '--remote-allow-origins=*',
         '--no-first-run',
         '--no-default-browser-check',
+        f'--user-data-dir={DEFAULT_USER_DATA_DIR}',
         url
     ]
 
