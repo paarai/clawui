@@ -89,14 +89,14 @@ try:
     _marionette_client = MarionetteClient()
     MARIONETTE_AVAILABLE = _marionette_client._connect()
     if MARIONETTE_AVAILABLE:
-        _marionette_client._disconnect()
+        _marionette_client.close()
 except Exception:
     try:
         from src.marionette_helper import MarionetteClient
         _marionette_client = MarionetteClient()
         MARIONETTE_AVAILABLE = _marionette_client._connect()
         if MARIONETTE_AVAILABLE:
-            _marionette_client._disconnect()
+            _marionette_client.close()
     except Exception as e:
         MARIONETTE_AVAILABLE = False
         _marionette_client = None
