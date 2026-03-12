@@ -264,8 +264,8 @@ def execute_tool(name: str, input_data: dict) -> dict:
             cdp = _get_cdp()
             if not cdp:
                 return {"type": "text", "text": "CDP not available"}
-            result = cdp.click_at(input_data["x"], input_data["y"])
-            return {"type": "text", "text": result}
+            cdp.dispatch_mouse(input_data["x"], input_data["y"])
+            return {"type": "text", "text": f"Clicked at ({input_data['x']}, {input_data['y']})"}
 
         elif name == "cdp_list_tabs":
             cdp = _get_cdp()
