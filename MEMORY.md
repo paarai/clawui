@@ -135,6 +135,16 @@
 7. **视觉模型硬件限制**: T430 的 NVIDIA NVS 5400M + 内核 6.17 驱动编译失败; CPU-only 推理 moondream 超时 (60-180s), 不可行
 8. **新方案 - 模板坐标自动化**: 创建 `learn_template.py` 记录元素相对坐标, 实现 `click_template` 工具 (基于模板+窗口几何), 无需视觉 AI
 
+## 近期行动摘要 (2026-03-13)
+1. **新增 `wait_for_element` 工具** - 实现带指数退避的 AT-SPI 元素等待机制，大幅提升自动化可靠性（之前仅有 `wait_for_window`）。
+2. **创建 `tests/test_core.py` 测试套件** - 21 个测试涵盖工具注册、后端导入、基础操作、perception 路由等；11 个非 GUI 测试全部通过，10 个 GUI 测试在无图形环境优雅跳过。
+3. **修复 agent.py 中 4 个关键 bug**:
+   - 变量遮蔽问题（`find_element` 中的 `name` 参数被覆盖）
+   - 导入不一致（`from src.` 改为 `from .` 避免包加载失败）
+   - `consecutive_errors` 计数逻辑错误（重置位置错误导致从不触发）
+   - `result` 变量名冲突（后端响应与工具结果混淆）
+4. **持续集成验证**: 所有自动 cron 任务通过，GitHub Issues 为零，工作区保持干净。
+
 ## 待办
 - **测试模板系统**: 手动运行 `learn_template.py wechat_devtools` 记录"新建项目"等按钮坐标, 然后用 `click_template` 实现完整自动化
 - **配置 LLM** (可选): 如有 anyrouter API key, 可启用 `plan_and_execute` 的智能规划能力
