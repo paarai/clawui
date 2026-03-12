@@ -179,13 +179,13 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             max_attempts = int(os.getenv('CLAWUI_RETRY_MAX', '3'))
             delay = float(os.getenv('CLAWUI_RETRY_DELAY', '0.5'))
             role = input_data.get("role")
-            name = input_data.get("name")
+            el_name = input_data.get("name")
             name_contains = input_data.get("name_contains")
             role_contains = input_data.get("role_contains")
             for attempt in range(max_attempts):
                 try:
                     # Get raw elements from perception
-                    elements = find_elements(role=role, name=name)
+                    elements = find_elements(role=role, name=el_name)
                     # Apply fuzzy filters if provided
                     if name_contains:
                         elements = [e for e in elements if name_contains.lower() in str(e).lower()]
@@ -287,7 +287,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             windows_info = []
             try:
                 # Try X11 backend first if available
-                from src.x11_helper import list_windows as x11_list_windows, X11Window
+                from .x11_helper import list_windows as x11_list_windows, X11Window
                 if x11_list_windows():
                     for w in x11_list_windows():
                         windows_info.append({
@@ -311,7 +311,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 return {"type": "text", "text": "Missing 'title' or 'title_contains'"}
             try:
                 # Find window by title
-                from src.x11_helper import list_windows as x11_list_windows, activate_window as x11_activate
+                from .x11_helper import list_windows as x11_list_windows, activate_window as x11_activate
                 windows = x11_list_windows()
                 target = None
                 if title:
@@ -341,7 +341,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             start = time.time()
             while time.time() - start < timeout:
                 try:
-                    from src.x11_helper import list_windows as x11_list_windows
+                    from .x11_helper import list_windows as x11_list_windows
                     windows = x11_list_windows()
                     found = None
                     if title:
@@ -389,7 +389,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             detail = input_data.get("detail", "brief")
             try:
                 # Take screenshot and use vision backend to describe
-                from src.vision_backend import VisionBackend
+                from .vision_backend import VisionBackend
                 img = take_screenshot()
                 if not img:
                     return {"type": "text", "text": "Failed to take screenshot"}
@@ -659,7 +659,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
 
         # Marionette (Firefox) tools
         elif name == "ff_navigate":
-            from src.marionette_helper import get_or_create_marionette_client
+            from .marionette_helper import get_or_create_marionette_client
             mc = get_or_create_marionette_client()
             if not mc:
                 return {"type": "text", "text": "Marionette not available. Start Firefox with --marionette"}
@@ -669,7 +669,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             return {"type": "text", "text": json.dumps(info, ensure_ascii=False)}
 
         elif name == "ff_click":
-            from src.marionette_helper import get_or_create_marionette_client
+            from .marionette_helper import get_or_create_marionette_client
             mc = get_or_create_marionette_client()
             if not mc:
                 return {"type": "text", "text": "Marionette not available"}
@@ -680,7 +680,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             return {"type": "text", "text": f"Click: {ok}"}
 
         elif name == "ff_type":
-            from src.marionette_helper import get_or_create_marionette_client
+            from .marionette_helper import get_or_create_marionette_client
             mc = get_or_create_marionette_client()
             if not mc:
                 return {"type": "text", "text": "Marionette not available"}
@@ -691,7 +691,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             return {"type": "text", "text": f"Typed into {input_data['selector']}"}
 
         elif name == "ff_eval":
-            from src.marionette_helper import get_or_create_marionette_client
+            from .marionette_helper import get_or_create_marionette_client
             mc = get_or_create_marionette_client()
             if not mc:
                 return {"type": "text", "text": "Marionette not available"}
@@ -699,7 +699,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             return {"type": "text", "text": json.dumps(result, ensure_ascii=False)[:500]}
 
         elif name == "ff_page_info":
-            from src.marionette_helper import get_or_create_marionette_client
+            from .marionette_helper import get_or_create_marionette_client
             mc = get_or_create_marionette_client()
             if not mc:
                 return {"type": "text", "text": "Marionette not available"}
@@ -707,7 +707,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             return {"type": "text", "text": json.dumps(info, ensure_ascii=False)}
 
         elif name == "ff_screenshot":
-            from src.marionette_helper import get_or_create_marionette_client
+            from .marionette_helper import get_or_create_marionette_client
             mc = get_or_create_marionette_client()
             if not mc:
                 return {"type": "text", "text": "Marionette not available"}
@@ -717,7 +717,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             return {"type": "text", "text": "Screenshot failed"}
 
         elif name == "ff_list_tabs":
-            from src.marionette_helper import get_or_create_marionette_client
+            from .marionette_helper import get_or_create_marionette_client
             mc = get_or_create_marionette_client()
             if not mc:
                 return {"type": "text", "text": "Marionette not available"}
@@ -725,7 +725,7 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             return {"type": "text", "text": json.dumps(handles, ensure_ascii=False)}
 
         elif name == "ff_switch_tab":
-            from src.marionette_helper import get_or_create_marionette_client
+            from .marionette_helper import get_or_create_marionette_client
             mc = get_or_create_marionette_client()
             if not mc:
                 return {"type": "text", "text": "Marionette not available"}
@@ -856,13 +856,14 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
     initial_context = f"Active window: {active['name']}\nRunning apps: {', '.join(apps)}\n\nTask: {task}"
 
     messages = [{"role": "user", "content": initial_context}]
+    consecutive_errors = 0
+    last_response = None
 
     for step in range(max_steps):
         print(f"\n--- Step {step + 1}/{max_steps} ---")
 
-        consecutive_errors = 0
         try:
-            result = backend.chat(
+            response = backend.chat(
                 messages=messages,
                 tools=tools,
                 system=SYSTEM_PROMPT,
@@ -873,15 +874,16 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
             print(f"Backend error: {e}")
             if consecutive_errors >= 3:
                 return f"Agent stopped: 3 consecutive backend errors. Last: {e}"
-            # Add error context and retry
             messages.append({"role": "user", "content": f"[System] Backend error occurred: {e}. Please retry."})
             continue
+
+        last_response = response
 
         # Process response
         assistant_content = []
         tool_uses = []
 
-        for block in result["raw_content"]:
+        for block in response["raw_content"]:
             if block.type == "text":
                 print(f"Agent: {block.text}")
                 assistant_content.append({"type": "text", "text": block.text})
@@ -904,9 +906,9 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
         # Execute tools
         tool_results = []
         for tool_use in tool_uses:
-            result = execute_tool(tool_use.name, tool_use.input)
+            tool_result = execute_tool(tool_use.name, tool_use.input)
 
-            if result["type"] == "image":
+            if tool_result["type"] == "image":
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use.id,
@@ -915,7 +917,7 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                         "source": {
                             "type": "base64",
                             "media_type": "image/png",
-                            "data": result["base64"],
+                            "data": tool_result["base64"],
                         }
                     }],
                 })
@@ -923,14 +925,13 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use.id,
-                    "content": result["text"],
+                    "content": tool_result.get("text", str(tool_result)),
                 })
 
         messages.append({"role": "user", "content": tool_results})
 
-    # Extract final text from last response
-    if result.get("text"):
-        return result["text"]
+    if last_response and last_response.get("text"):
+        return last_response["text"]
     return "Task completed."
 
 
@@ -939,5 +940,5 @@ if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python -m src.agent 'Open Firefox and go to google.com'")
         sys.exit(1)
-    result = run_agent(" ".join(sys.argv[1:]))
-    print(f"\nResult: {result}")
+    final = run_agent(" ".join(sys.argv[1:]))
+    print(f"\nResult: {final}")
