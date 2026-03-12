@@ -97,7 +97,11 @@ def create_tools():
     return [
         {"name": "screenshot", "description": "Take a screenshot of the screen", "input_schema": {"type": "object", "properties": {}}},
         {"name": "ui_tree", "description": "Get UI element tree", "input_schema": {"type": "object", "properties": {"app_name": {"type": "string", "description": "App name filter (optional)"}}}},
-        {"name": "find_element", "description": "Find UI elements", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}}}},
+        {"name": "find_element", "description": "Find UI elements by role and/or name (supports partial match)", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}, "name_contains": {"type": "string"}, "role_contains": {"type": "string"}}}},
+        {"name": "list_windows", "description": "List all top-level windows with title and geometry", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "activate_window", "description": "Activate/focus a window by title (supports partial match)", "input_schema": {"type": "object", "properties": {"title": {"type": "string"}, "title_contains": {"type": "string"}}}},
+        {"name": "wait_for_window", "description": "Wait for a window with given title (or partial title) to appear, returns window info", "input_schema": {"type": "object", "properties": {"title": {"type": "string"}, "title_contains": {"type": "string"}, "timeout": {"type": "number", "default": 30}}}},
+        {"name": "describe_screen", "description": "Get a textual description of what's on screen using vision AI", "input_schema": {"type": "object", "properties": {"detail": {"type": "string", "enum": ["brief", "detailed"], "default": "brief"}}}},
         {"name": "click", "description": "Click at coordinates", "input_schema": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
         {"name": "double_click", "description": "Double-click", "input_schema": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
         {"name": "right_click", "description": "Right-click", "input_schema": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
@@ -139,6 +143,8 @@ def create_tools():
         {"name": "record_stop", "description": "Stop recording and save to file", "input_schema": {"type": "object", "properties": {"filepath": {"type": "string", "description": "Save path (default: recordings/<name>.json)"}}}},
         {"name": "replay", "description": "Replay a recorded script", "input_schema": {"type": "object", "properties": {"filepath": {"type": "string", "description": "Path to recording JSON"}, "speed": {"type": "number", "description": "Playback speed multiplier (default 1.0)"}, "dry_run": {"type": "boolean", "description": "Preview without executing"}}, "required": ["filepath"]}},
         {"name": "list_recordings", "description": "List available recorded scripts", "input_schema": {"type": "object", "properties": {}}},
+        # High-level task automation (B)
+        {"name": "plan_and_execute", "description": "Given a natural language task, autonomously break it down into steps and execute using available tools. Returns final result and summary.", "input_schema": {"type": "object", "properties": {"task": {"type": "string", "description": "Natural language description of the task to accomplish"}}, "required": ["task"]}},
     ]
 
 
@@ -167,12 +173,19 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
         elif name == "find_element":
             max_attempts = int(os.getenv('CLAWUI_RETRY_MAX', '3'))
             delay = float(os.getenv('CLAWUI_RETRY_DELAY', '0.5'))
+            role = input_data.get("role")
+            name = input_data.get("name")
+            name_contains = input_data.get("name_contains")
+            role_contains = input_data.get("role_contains")
             for attempt in range(max_attempts):
                 try:
-                    elements = find_elements(
-                        role=input_data.get("role"),
-                        name=input_data.get("name"),
-                    )
+                    # Get raw elements from perception
+                    elements = find_elements(role=role, name=name)
+                    # Apply fuzzy filters if provided
+                    if name_contains:
+                        elements = [e for e in elements if name_contains.lower() in str(e).lower()]
+                    if role_contains:
+                        elements = [e for e in elements if role_contains.lower() in str(e.role if hasattr(e, 'role') else e.get('role', '')).lower()]
                     if elements:
                         text = "\n".join(str(e) for e in elements[:20])
                         return {"type": "text", "text": text}
@@ -262,6 +275,174 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
         elif name == "wait":
             time.sleep(input_data["seconds"])
             return {"type": "text", "text": f"Waited {input_data['seconds']}s"}
+
+        # Enhanced window management tools (A)
+        elif name == "list_windows":
+            """List all top-level windows with title and geometry."""
+            windows_info = []
+            try:
+                # Try X11 backend first if available
+                from src.x11_helper import list_windows as x11_list_windows, X11Window
+                if x11_list_windows():
+                    for w in x11_list_windows():
+                        windows_info.append({
+                            "title": w.title,
+                            "wid": w.wid,
+                            "geometry": f"{w.width}x{w.height} at ({w.x},{w.y})"
+                        })
+                else:
+                    # Fallback to AT-SPI apps list
+                    apps = list_applications()
+                    for app in apps:
+                        windows_info.append({"title": app, "type": "application"})
+            except Exception as e:
+                return {"type": "text", "text": f"list_windows error: {e}"}
+            return {"type": "dict", "windows": windows_info, "count": len(windows_info)}
+
+        elif name == "activate_window":
+            title = input_data.get("title")
+            title_contains = input_data.get("title_contains")
+            if not title and not title_contains:
+                return {"type": "text", "text": "Missing 'title' or 'title_contains'"}
+            try:
+                # Find window by title
+                from src.x11_helper import list_windows as x11_list_windows, activate_window as x11_activate
+                windows = x11_list_windows()
+                target = None
+                if title:
+                    for w in windows:
+                        if title.lower() in w.title.lower():
+                            target = w
+                            break
+                else:
+                    for w in windows:
+                        if title_contains.lower() in w.title.lower():
+                            target = w
+                            break
+                if target:
+                    x11_activate(target)
+                    return {"type": "text", "text": f"Activated window: {target.title}"}
+                else:
+                    return {"type": "text", "text": f"No window matching '{title or title_contains}' found"}
+            except Exception as e:
+                return {"type": "text", "text": f"activate_window error: {e}"}
+
+        elif name == "wait_for_window":
+            title = input_data.get("title")
+            title_contains = input_data.get("title_contains")
+            timeout = input_data.get("timeout", 30)
+            if not title and not title_contains:
+                return {"type": "text", "text": "Missing 'title' or 'title_contains'"}
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    from src.x11_helper import list_windows as x11_list_windows
+                    windows = x11_list_windows()
+                    found = None
+                    if title:
+                        for w in windows:
+                            if title.lower() in w.title.lower():
+                                found = w
+                                break
+                    else:
+                        for w in windows:
+                            if title_contains.lower() in w.title.lower():
+                                found = w
+                                break
+                    if found:
+                        return {"type": "dict", "title": found.title, "wid": found.wid, "geometry": f"{found.width}x{found.height}", "text": f"Window appeared: {found.title}"}
+                except Exception:
+                    pass
+                time.sleep(1)
+            return {"type": "text", "text": f"Timeout: window '{title or title_contains}' not found after {timeout}s"}
+
+        elif name == "describe_screen":
+            detail = input_data.get("detail", "brief")
+            try:
+                # Take screenshot and use vision backend to describe
+                from src.vision_backend import VisionBackend
+                img = take_screenshot()
+                if not img:
+                    return {"type": "text", "text": "Failed to take screenshot"}
+                vb = VisionBackend()
+                prompt = "Briefly describe what's on this screen in 2-3 sentences." if detail == "brief" else "Give a detailed description of all UI elements on this screen, including buttons, text fields, menus, and their approximate locations."
+                resp = vb.chat([
+                    {"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}
+                    ]}
+                ], tools=[], system="You are a helpful assistant describing GUI screens.")
+                text = resp.get("text", "").strip()
+                return {"type": "text", "text": text}
+            except Exception as e:
+                return {"type": "text", "text": f"describe_screen error: {e}"}
+
+        # B. High-level task automation (plan-and-execute)
+        elif name == "plan_and_execute":
+            task = input_data.get("task")
+            if not task:
+                return {"type": "text", "text": "Missing 'task' parameter"}
+            max_steps = input_data.get("max_steps", 30)
+            try:
+                backend = get_backend()
+            except Exception as e:
+                return {"type": "text", "text": f"get_backend error: {e}"}
+            
+            # Prepare tools list (exclude plan_and_execute to avoid recursion)
+            all_tools = create_tools()
+            tools = [t for t in all_tools if t["name"] != "plan_and_execute"]
+            
+            messages = [{"role": "user", "content": task}]
+            history = []
+            step = 0
+            
+            while step < max_steps:
+                try:
+                    resp = backend.chat(messages, tools, SYSTEM_PROMPT)
+                except Exception as e:
+                    return {"type": "text", "text": f"LLM call failed at step {step}: {e}"}
+                
+                tool_calls = resp.get("tool_calls", [])
+                if not tool_calls:
+                    # Task complete
+                    summary = resp.get("text", "")
+                    return {"type": "dict", "completed": True, "summary": summary, "steps": step, "history": history}
+                
+                # Process each tool call
+                for call in tool_calls:
+                    tname = call["name"]
+                    tinput = call["input"]
+                    call_id = call.get("id", f"call_{step}_{len(history)}")
+                    
+                    # Execute the tool
+                    try:
+                        tresult = execute_tool(tname, tinput)
+                    except Exception as e:
+                        tresult = {"type": "text", "text": f"Tool execution error: {e}"}
+                    
+                    history.append({
+                        "step": step + 1,
+                        "tool": tname,
+                        "input": tinput,
+                        "result": tresult,
+                        "call_id": call_id
+                    })
+                    
+                    # Append assistant message with tool_use
+                    messages.append({
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [{"id": call_id, "type": "tool_use", "name": tname, "input": tinput}]
+                    })
+                    # Append user message with tool result
+                    messages.append({
+                        "role": "user",
+                        "content": f"Tool: {tname}\nResult: {json.dumps(tresult, ensure_ascii=False)}"
+                    })
+                    
+                step += 1
+            
+            return {"type": "dict", "completed": False, "summary": "Max steps reached", "steps": max_steps, "history": history}
 
         # Application launch tools
         elif name == "launch_app":
