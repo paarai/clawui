@@ -51,24 +51,39 @@ def test_cdp():
 
 def test_marionette():
     log("=== Marionette Test ===")
-    client = MarionetteClient()
-    if not client.is_available():
-        log("Marionette not available (is Firefox running with --marionette?)")
+    # Use get_or_create_marionette_client to auto-start Firefox if needed
+    try:
+        from marionette_helper import get_or_create_marionette_client
+    except ImportError:
+        from src.marionette_helper import get_or_create_marionette_client
+
+    client = get_or_create_marionette_client()
+    if not client:
+        log("Marionette not available (requires Firefox with --marionette)")
         return False
+
     session = client.new_session()
     if not session:
         log("Failed to create Marionette session")
         return False
+
     ok = client.navigate("https://example.com")
     time.sleep(2)
     title = client.get_title()
     url = client.get_url()
     log(f"Page: {title} @ {url}")
     ok = ok and ("example" in (title + url).lower())
+
+    # Clean up: close the window (but don't quit Firefox entirely - keep it for reuse)
     try:
         client.close_window()
     except Exception:
         pass
+
+    if ok:
+        log("Marionette test PASSED")
+    else:
+        log("Marionette test FAILED")
     return ok
 
 def main():
