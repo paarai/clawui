@@ -3,6 +3,7 @@
 import json
 import re
 import os
+import sys
 
 from .screenshot import take_screenshot, get_screen_size
 from .atspi_helper import (
@@ -21,16 +22,19 @@ from .recorder import Recorder, Player, start_recording, stop_recording, record_
 _cdp_client = None
 
 def _get_cdp():
+    """Get CDP client, auto-launching Chromium if needed."""
     global _cdp_client
-    if _cdp_client is None:
-        try:
-            from .cdp_helper import CDPClient
-            c = CDPClient()
-            if c.is_available():
-                _cdp_client = c
-        except:
-            pass
-    return _cdp_client
+    if _cdp_client is not None and _cdp_client.is_available():
+        return _cdp_client
+    try:
+        from .cdp_helper import get_or_create_cdp_client
+        c = get_or_create_cdp_client()
+        if c and c.is_available():
+            _cdp_client = c
+            return _cdp_client
+    except Exception as e:
+        print(f"[WARN] CDP auto-launch failed: {e}", file=sys.stderr)
+    return None
 
 SYSTEM_PROMPT = """You are a GUI automation agent controlling a Linux desktop.
 
