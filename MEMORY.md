@@ -122,9 +122,17 @@
 2. **CDP 小游戏演示** - demo_mini_game_cdp.py 验证浏览器自动化能力
 3. **Wine 环境搭建** - 为在 Linux 运行微信开发者工具准备容器
 4. **安装辅助脚本** - `setup_wechat.py` 用于检测/安装/启动微信开发者工具（Wine）
+5. **新增启动工具** - `launch_app` 和 `launch_wechat_devtools` 已添加到 agent.py，支持启动窗口程序
+6. **完整自动化脚本** - `automate_wechat.py` 演示从启动到创建运行小游戏的完整流程
 
 ## 待办（需要外部输入）
-- **微信开发者工具完整测试**: 等待手动提供 wechatdevtools.exe 安装包
-  - 可用路径: `~/wechat-tools/wechatdevtools.exe` 或任意本地路径
-  - 运行: `python3 setup_wechat.py install <path_to_exe>`
-  - 然后运行自动化测试脚本（待创建）
+- **微信开发者工具完整测试**: 等待手动启动微信开发者工具窗口
+  - 启动方式: 从桌面菜单运行 "微信开发者工具" 或执行 `wechat-devtools`
+  - 一旦窗口打开，运行: `python3 ~/.openclaw/workspace/automate_wechat.py`
+  - 脚本会自动: 检测窗口 → 新建项目 → 写入接苹果小游戏代码 → 编译运行 → 截图
+  - 会记录任何兼容性问题并自动尝试修复
+
+## 技术实现更新
+- **launch_app**: 通用应用启动工具，通过 subprocess.Popen 启动任意命令
+- **launch_wechat_devtools**: 专用工具，支持 snap（首选）和 wine（备选）两种方式
+- **环境要求**: 自动化脚本需在图形会话中运行（有 DISPLAY/WAYLAND_DISPLAY）
