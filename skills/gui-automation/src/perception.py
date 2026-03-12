@@ -128,13 +128,19 @@ def _get_marionette_client() -> Optional['MarionetteClient']:
     global MARIONETTE_AVAILABLE, _marionette_client
     if _marionette_client:
         try:
+            # Quick check: can we connect? (_connect will set _sock if successful)
+            # Note: _connect() does a socket connect and reads hello; it's safe to test.
+            # We don't want to keep the connection open all the time; we'll use on-demand.
             if _marionette_client._connect():
-                _marionette_client._disconnect()
+                # Connection succeeded, port is open. Close the test socket.
+                _marionette_client.close()
                 MARIONETTE_AVAILABLE = True
+                # Return a fresh client wrapper that will reconnect on use.
+                # Actually, we can return the same client; it will reconnect on next use.
                 return _marionette_client
-        except:
+        except Exception:
             pass
-    # Try reconnecting
+    # Try (re)connecting: create a new client and check availability
     try:
         try:
             from .marionette_helper import MarionetteClient
@@ -142,10 +148,10 @@ def _get_marionette_client() -> Optional['MarionetteClient']:
             from src.marionette_helper import MarionetteClient
         _marionette_client = MarionetteClient()
         if _marionette_client._connect():
-            _marionette_client._disconnect()
+            _marionette_client.close()  # close test socket; client will reconnect on use
             MARIONETTE_AVAILABLE = True
             return _marionette_client
-    except:
+    except Exception:
         pass
     MARIONETTE_AVAILABLE = False
     return None
@@ -171,18 +177,19 @@ def _is_xwayland_app(app_name: str) -> bool:
 def _get_marionette_summary(mario: 'MarionetteClient') -> str:
     """Get Firefox browser state summary via Marionette."""
     try:
-        from .marionette_backend import MarionetteBackend
-    except ImportError:
-        from src.marionette_backend import MarionetteBackend
-    try:
-        backend = MarionetteBackend()
-        # Get current page info
-        url = backend.get_url() if hasattr(backend, 'get_url') else "unknown"
-        title = backend.get_title() if hasattr(backend, 'get_title') else "unknown"
-        lines = ["Firefox (Marionette):", f"  Title: {title}", f"  URL: {url}"]
-        # Try to get page source summary
+        # Ensure we have a working connection (MarionetteClient has reconnect logic)
+        # The client passed is from _get_marionette_client which handles availability
+        lines = ["Firefox (Marionette):"]
+
+        # Get current page info directly from client
+        title = mario.get_title() or "unknown"
+        url = mario.get_url() or "unknown"
+        lines.append(f"  Title: {title}")
+        lines.append(f"  URL: {url}")
+
+        # Try to get page interactive elements via JavaScript
         try:
-            result = backend.execute_script('''
+            result = mario.execute_script('''
                 var els = document.querySelectorAll('input,select,textarea,button,[role=button]');
                 var items = [];
                 for (var i = 0; i < Math.min(els.length, 30); i++) {
@@ -197,16 +204,18 @@ def _get_marionette_summary(mario: 'MarionetteClient') -> str:
                 return JSON.stringify(items);
             ''')
             if result:
+                # result might be a string (JSON) or already parsed dict
                 elements = json.loads(result) if isinstance(result, str) else result
                 if elements:
                     lines.append(f"  Interactive elements ({len(elements)}):")
                     for el in elements:
                         name = el.get("name") or el.get("text", "")[:30]
                         lines.append(f"    <{el['tag']}> type={el.get('type','')} name=\"{name}\"")
-        except:
+        except Exception:
             pass
+
         return "\n".join(lines)
-    except:
+    except Exception:
         return "Firefox (Marionette): connected but unable to get page info"
 
 
