@@ -84,6 +84,16 @@
   - `demos/github_google_login.py` + 测试文档
 - **Todo**: 所有核心后端完成（AT-SPI, X11, CDP, Marionette, Vision）。待测试 Firefox Marionette 实景场景。
 
+## 里程碑达成 (2026-03-12)
+- **Firefox Marionette 全面测试验证**:
+  - 创建 `test_firefox_marionette.py` 测试套件，包含导航、表单填写、截图、JS 执行。
+  - 改进 `test_e2e.py` 中的 Marionette 测试，使其能自动启动 Firefox，无需手动开启。
+  - 本地测试全部通过：4/4 单元测试 PASS，e2e 测试 PASS。
+  - 意义：至此，ClawUI 四大后端（AT-SPI、X11、CDP、Marionette）全部完成并验证，可以可靠地自动化原生 Wayland 应用、XWayland 应用、Chromium 浏览器和 Firefox 浏览器，成为真正的跨浏览器、跨桌面环境的自动化平台。
+- **提交**: `392a9fc` (Firefox Marionette 测试) 及后续记忆更新 `5db4a65` 已推送至 origin/main。
+- **工作区状态**: 干净，无未提交变更。
+
 ## 状态
-- **未提交变更**: `ClawUI/` (子模块，包含多项脚本和工具更新), `create_github_repo_cdp.py` (增强了认证逻辑), `TODO.md`, `MEMORY.md`, `memory/2026-03-11.md`。
-- **新增目录**: `tools/` (包含 `github_pat_manager.py`)。
+- **工作区**: 干净（所有更改已提交推送）。
+- **未提交变更**: 无。
+- **新增目录**: `tools/` 已纳入版本控制。
