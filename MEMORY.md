@@ -85,7 +85,12 @@
   - `demos/github_google_login.py` + 测试文档
 - **Todo**: 所有核心后端完成（AT-SPI, X11, CDP, Marionette, Vision）。待测试 Firefox Marionette 实景场景。
 
-## 里程碑达成 (2026-03-12)
+## 最新里程碑 (2026-03-12)
+- **OCR 文本定位**: 为解决 VLM 模型在 CPU 上过慢的问题，实现了基于 OCR 的快速文本定位方案 (`find_text` 工具)。
+  - **技术选型**: 优先使用 RapidOCR（~150ms），备选 Tesseract（~500ms）。
+  - **实现**: 新增 `src/ocr_tool.py` 模块，提供 `ocr_find_text` 函数，并将 `find_text` 工具集成到 ClawUI Agent。
+  - **配套工具**: 新增 `learn_template.py` 脚本和 `click_template` 工具，用于学习和点击 UI 元素的相对坐标，实现不依赖 AI 的稳定自动化。
+  - **意义**: 大幅提升了 UI 元素定位的速度和可靠性，绕过了本地 VLM 的性能瓶颈。
 - **Firefox Marionette 全面测试验证**:
   - 创建 `test_firefox_marionette.py` 测试套件，包含导航、表单填写、截图、JS 执行。
   - 改进 `test_e2e.py` 中的 Marionette 测试，使其能自动启动 Firefox，无需手动开启。
