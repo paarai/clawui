@@ -93,35 +93,23 @@
 - **提交**: `392a9fc` (Firefox Marionette 测试) 及后续记忆更新 `5db4a65` 已推送至 origin/main。
 - **工作区状态**: 干净，无未提交变更。
 
-## 代码审核 (2026-03-12)
-- **用户指令**: "审核代码"
-- **发现严重bug**: `cdp_click_at` 工具调用了不存在的 `cdp.click_at()` 方法
-  - 修复: 两个文件都改为调用正确的 `cdp.dispatch_mouse(x, y)`
-- **文件损坏**: `test_vision_tool.py` 已损坏，重新生成为有效测试脚本
-- **测试通过**: vision_find_element 工具注册和执行测试均通过 ✅
-- **整体评估**: 架构健康，工具集完整，无其他问题
+## 微信开发者工具自动化测试尝试 (2026-03-12 11:15-12:00)
+- **目标**: 用 ClawUI 控制微信开发者工具并创建小游戏
+- **步骤**:
+  1. 安装 Wine (success) - `sudo apt install wine wine64 wine32`
+  2. 初始化 Wine prefix - `wineboot --init`
+  3. 尝试下载微信开发者工具 Windows 版失败:
+     - GitHub releases 链接版本不存在 (1.06.0)
+     - 网络/证书问题影响阿里镜像源
+     - 需要正确的下载链接或手动提供 exe
+- **当前状态**: Wine 环境就绪，等待手动提供 `wechatdevtools.exe` 或有效下载源
+- **替代方案**: 使用 CDP 浏览器自动化已成功演示（`demo_mini_game_cdp.py`）
 
-## 微信开发者工具自动化测试 (2026-03-12)
-- **目标**: 使用 ClawUI 控制微信开发者工具并创建小游戏
-- **现状**: 系统中未安装微信开发者工具
-- **替代测试**: 使用 CDP 浏览器自动化演示创建并运行一个" Catch the Dot " HTML5 小游戏
-  
-- **测试脚本**: `demo_mini_game_cdp.py`
-- **结果**: 基本流程工作，但有稳定性问题：
-  1. **页面加载等待不足** - CodePen 加载慢，需要更 robust 的等待机制
-  2. **CDP 截图失败** - 需要检查 Chromium 是否支持截图端点 (可能需要 Page.captureScreenshot)
-  3. **元素查找失败** - 直接 data URL 形式下，DOM 结构与预期不同
-  4. **建议**: 对生产环境应用（如微信开发者工具）使用显式等待 + 重试机制
-
-- **改进点待办**:
-  - 为 cdp_navigate 增加 wait_for_load 参数或提供 wait_until 工具
-  - 修复 cdp_screenshot 实现（目前可能未正确调用 Page.captureScreenshot）
-  - 添加 cdp_wait_for_element 工具
-
-## 修复过的 Marionette Bug (2026-03-12)
-- **问题**: `perception.py` 调用不存在的 `_marionette_client._disconnect()`
-- **修复**: 改用正确的 `_marionette_client.close()`
-- **影响**: 修复后 Marionette 可用性检测不再抛出 AttributeError 警告
+## 代码修复总结
+- cdp_click_at: 非方法 → 改为 dispatch_mouse (2处)
+- Marionette: _disconnect() → close()
+- test_vision_tool.py: 重建并修复
+- 新增验证脚本: `scripts/validate_python_files.py`
 
 ## 状态
 - **工作区**: 干净（所有更改已提交推送）。
