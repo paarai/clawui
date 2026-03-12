@@ -115,29 +115,27 @@
 ## 状态
 - **工作区**: 干净（所有更改已提交推送）。
 - **未提交变更**: 无。
-- **新增目录**: `scripts/` (验证工具), `tools/` 已纳入版本控制。
+- **新增目录**: `scripts/` (验证工具), `tools/`, `templates/` (规划中)
 
 ## 近期行动摘要 (2026-03-12)
 1. **代码审核** - 发现并修复 cdp_click_at、marionette _disconnect、test_vision_tool.py 损坏问题
 2. **CDP 小游戏演示** - demo_mini_game_cdp.py 验证浏览器自动化能力
 3. **Wine 环境搭建** - 为在 Linux 运行微信开发者工具准备容器
-4. **安装辅助脚本** - `setup_wechat.py` 用于检测/安装/启动微信开发者工具（Wine）
-5. **新增启动工具** - `launch_app` 和 `launch_wechat_devtools` 已添加到 agent.py，支持启动窗口程序
-6. **完整自动化脚本** - `automate_wechat.py` 演示从启动到创建运行小游戏的完整流程
-7. **环境限制发现**: ClawUI 自动化需要在图形会话中运行（AT-SPI 和 X11 后端都需要访问图形总线）。不能从 PTY/headless 会话直接控制 GUI。提供了 `run_wechat_auto.sh` 包装器用于在桌面终端一键启动。
+4. **安装辅助脚本** - `setup_wechat.py` 用于检测/安装/启动微信开发者工具 (Wine)
+5. **新增启动工具** - `launch_app` 和 `launch_wechat_devtools` 已添加到 agent.py, 支持启动窗口程序
+6. **通用 GUI 控制增强** (A/B/C):
+   - **A. 增强工具集**: `list_windows`, `activate_window`, `wait_for_window`, `describe_screen`, `find_element` (fuzzy: `name_contains`, `role_contains`)
+   - **B. plan_and_execute**: 高层任务自动化, 让 LLM 自主规划并执行步骤
+   - **C. 通用化**: 脚本重构为任务驱动, 不硬编码 UI 文本
+7. **视觉模型硬件限制**: T430 的 NVIDIA NVS 5400M + 内核 6.17 驱动编译失败; CPU-only 推理 moondream 超时 (60-180s), 不可行
+8. **新方案 - 模板坐标自动化**: 创建 `learn_template.py` 记录元素相对坐标, 实现 `click_template` 工具 (基于模板+窗口几何), 无需视觉 AI
 
-## 待办（需要外部输入）
-- **微信开发者工具完整测试**: 请在**图形终端**（如 GNOME Terminal）中运行：
-  ```bash
-  cd ~/.openclaw/workspace
-  ./run_wechat_auto.sh
-  ```
-  脚本会自动: 启动微信开发者工具 → 检测窗口 → 新建项目 → 写入接苹果小游戏代码 → 编译运行 → 截图
-- 记录任何兼容性问题并自动尝试修复（目前部分 UI 元素定位可能需要调整）
+## 待办
+- **测试模板系统**: 手动运行 `learn_template.py wechat_devtools` 记录"新建项目"等按钮坐标, 然后用 `click_template` 实现完整自动化
+- **配置 LLM** (可选): 如有 anyrouter API key, 可启用 `plan_and_execute` 的智能规划能力
 
-## 技术实现更新
-- **launch_app**: 通用应用启动工具，通过 subprocess.Popen 启动任意命令
-- **launch_wechat_devtools**: 专用工具，支持 snap（首选）和 wine（备选）两种方式
-- **环境要求**: 自动化脚本需在图形会话中运行（有 DISPLAY/WAYLAND_DISPLAY 和 DBUS_SESSION_BUS_ADDRESS）
-- **测试发现**: 微信开发者工具启动需要约 10-15 秒窗口才出现在 AT-SPI 树中，`automate_wechat.py` 已调整等待超时至 60 秒
+## 技术细节
+- **click_template**: 加载 `templates/<app>.json`, 匹配窗口, 计算绝对坐标并点击
+- **环境要求**: 自动化需在图形会话运行 (DISPLAY/WAYLAND_DISPLAY/DBUS_SESSION_BUS_ADDRESS)
+- **提交**: ClawUI `a99a3b9` -> `2599b31` (工具增强), 本仓库 `2599b31` (更新子模块)
 - **系统健康检查**: 新增 `tools/check_system_health.py`，用于验证所有自动化后端（AT-SPI, X11, CDP, Marionette, Vision）的可用性和运行状态。
