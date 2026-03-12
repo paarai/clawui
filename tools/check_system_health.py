@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-ClawUI System Health Check
+ClawUI System Health Check (Reliability-Optimized)
 
-Verifies all automation backends are available and functional.
+Verifies all automation backends are available and functional without
+auto-launching browsers (to avoid hangs in cron/headless environments).
+
 Exit codes: 0 = all healthy, 1 = some checks failed, 2 = critical failure.
 """
 
@@ -11,6 +13,8 @@ import os
 import subprocess
 import time
 import json
+import socket
+import http.client
 
 # Determine ClawUI root (assuming this script is in ClawUI/tools/)
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -34,7 +38,6 @@ def check_atspi():
     """Check AT-SPI backend."""
     try:
         import pyatspi
-        # Try to get desktop
         desktop = pyatspi.Registry.getDesktop(0)
         if desktop:
             return ok("AT-SPI accessible (pyatspi)")
@@ -46,21 +49,18 @@ def check_atspi():
 def check_x11():
     """Check X11 backend (xdotool and Xlib)."""
     checks = []
-    # xdotool
     try:
         subprocess.run(['xdotool', '--version'], capture_output=True, check=True, timeout=2)
         checks.append(ok("xdotool available"))
     except Exception as e:
         checks.append(fail(f"xdotool not found: {e}"))
 
-    # X11 python module
     try:
         import Xlib
         checks.append(ok("python-xlib available"))
     except ImportError:
         checks.append(fail("python-xlib not installed"))
 
-    # Try listing windows
     try:
         from src.x11_helper import list_windows
         windows = list_windows()
@@ -74,44 +74,58 @@ def check_x11():
     return all(checks)
 
 def check_cdp():
-    """Check CDP backend (Chromium)."""
+    """Check CDP backend without auto-launching (safe for cron)."""
     try:
-        from src.cdp_helper import get_or_create_cdp_client
-        client = get_or_create_cdp_client()
-        if client and client.is_available():
-            info = {"url": client.get_page_url() or "", "title": client.get_page_title() or ""}
-            return ok(f"CDP available - browser ready ({info.get('title','')})")
-        else:
-            return fail("CDP client not available (no browser)")
+        from src.cdp_helper import CDPClient
+        client = CDPClient()
+        # Quick HTTP GET to /json/version with short timeout
+        try:
+            conn = http.client.HTTPConnection(client.host, client.port, timeout=2)
+            conn.request("GET", "/json/version")
+            resp = conn.getresponse()
+            if resp.status == 200:
+                data = json.loads(resp.read())
+                product = data.get('product', 'Chromium')
+                return ok(f"CDP available - {product}")
+            else:
+                return fail(f"CDP endpoint responded {resp.status}")
+        except (socket.timeout, ConnectionRefusedError, OSError) as e:
+            return fail(f"CDP not running (connection failed: {type(e).__name__})")
+        except json.JSONDecodeError:
+            return fail("CDP response not valid JSON")
     except Exception as e:
-        return fail(f"CDP error: {e}")
+        return fail(f"CDP check error: {e}")
 
 def check_marionette():
-    """Check Marionette backend (Firefox)."""
+    """Check Marionette backend without auto-launching (safe for cron)."""
     try:
-        from src.marionette_helper import get_or_create_marionette_client
-        # Don't auto-start for health check - just check if any running instance responds
-        client = get_or_create_marionette_client()
-        if client:
-            try:
-                title = client.get_title() or ""
-                url = client.get_url() or ""
-                return ok(f"Marionette connected - Firefox ready ({title})")
-            except:
-                return fail("Marionette client exists but not responding")
-        else:
-            return fail("Marionette not available (Firefox not running with --marionette)")
+        from src.marionette_helper import MarionetteClient
+        client = MarionetteClient()
+        # Simple socket connect with short timeout
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)
+            result = sock.connect_ex((client.host, client.port))
+            sock.close()
+            if result == 0:
+                return ok("Marionette port open (Firefox with --marionette running)")
+            else:
+                return fail(f"Marionette not listening (connect error code {result})")
+        except socket.timeout:
+            return fail("Marionette connection timeout")
+        except OSError as e:
+            return fail(f"Marionette socket error: {e}")
     except Exception as e:
-        return fail(f"Marionette error: {e}")
+        return fail(f"Marionette check error: {e}")
 
 def check_vision():
     """Check vision backend (Ollama/OpenAI)."""
     try:
         from src.vision_backend import VisionBackend
-        # Check Ollama endpoint if default
-        import httpx
-        client = httpx.Client(timeout=httpx.Timeout(3.0))
+        # Check Ollama endpoint
         try:
+            import httpx
+            client = httpx.Client(timeout=httpx.Timeout(3.0))
             resp = client.get("http://localhost:11434/api/tags")
             if resp.status_code == 200:
                 data = resp.json()
@@ -123,7 +137,6 @@ def check_vision():
             else:
                 return fail(f"Ollama responded {resp.status_code}")
         except httpx.RequestError:
-            # Not Ollama, maybe OpenAI?
             api_key = os.getenv("OPENAI_API_KEY")
             if api_key:
                 return ok("OpenAI API key configured")
@@ -144,8 +157,6 @@ def main():
     section("ClawUI System Health Check")
     print(f"Time: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Host: {os.uname().nodename if hasattr(os,'uname') else 'unknown'}")
-    # Debug: show import paths
-    print(f"Debug: sys.path includes: {sys.path[:3]}")
 
     results = []
 
