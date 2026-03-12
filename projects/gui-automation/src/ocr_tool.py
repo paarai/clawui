@@ -12,30 +12,23 @@ from typing import List, Dict, Any
 sys.path.insert(0, os.path.dirname(__file__))
 
 
-# Global cache for the OCR engine
-_ocr_engine = None
+# Initialize OCR engine at module import (singleton)
+try:
+    from rapidocr_onnxruntime import RapidOCR
+    _ocr_engine = RapidOCR()
+    _has_rapidocr = True
+except ImportError:
+    _ocr_engine = None
+    _has_rapidocr = False
 
-def get_ocr_engine():
-    """Initializes and returns a singleton OCR engine instance."""
-    global _ocr_engine
-    if _ocr_engine is None:
-        try:
-            from rapidocr_onnxruntime import RapidOCR
-            _ocr_engine = RapidOCR()
-        except ImportError:
-            # This path is for the Tesseract fallback, which doesn't need a global engine
-            _ocr_engine = "TESSERACT_FALLBACK" 
-    return _ocr_engine
-
-def ocr_find_text(image_data: str, text: str, threshold: float = 0.6) -> List[Dict[str, Any]]:
+def ocr_find_text(image_data: str, text: str, threshold: float = 0.3) -> List[Dict[str, Any]]:
     """
     Find occurrences of `text` in screenshot via OCR.
     Returns list of matches: [{text, bbox: [[x1,y1],[x2,y2],...], center: [x,y], score}]
+    Uses global engine; threshold 0.3 by default for better recall.
     """
-    ocr = get_ocr_engine()
-
-    # Try RapidOCR first
-    if ocr != "TESSERACT_FALLBACK":
+    # Try RapidOCR first if available
+    if _has_rapidocr and _ocr_engine is not None:
         try:
             # image_data is base64 string without data: prefix
             if image_data.startswith('data:'):
@@ -46,7 +39,7 @@ def ocr_find_text(image_data: str, text: str, threshold: float = 0.6) -> List[Di
                 import base64
                 image_bytes = base64.b64decode(image_data)
             
-            result, _ = ocr(image_bytes)
+            result, _ = _ocr_engine(image_bytes)
             matches = []
             if result:
                 for box, ocr_text, score in result:
