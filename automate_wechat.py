@@ -19,15 +19,19 @@ from src.actions import click, type_text, press_key
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
-def wait_for_window(name_part, timeout=30):
+def wait_for_window(name_part, timeout=60):
     """Wait for a window containing name_part to appear."""
-    log(f"Waiting for window: {name_part}...")
+    log(f"Waiting for window containing: '{name_part}' (timeout {timeout}s)...")
     start = time.time()
     while time.time() - start < timeout:
         apps = find_elements(name=name_part)
         if apps:
             log(f"✅ Found: {apps[0]}")
             return apps[0]
+        # Also list what we see for debugging
+        if int(time.time() - start) % 10 == 0:
+            all_apps = find_elements()
+            log(f"  ... waiting, seen {len(all_apps)} apps so far")
         time.sleep(1)
     log(f"❌ Timeout waiting for: {name_part}")
     return None

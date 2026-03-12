@@ -124,15 +124,19 @@
 4. **安装辅助脚本** - `setup_wechat.py` 用于检测/安装/启动微信开发者工具（Wine）
 5. **新增启动工具** - `launch_app` 和 `launch_wechat_devtools` 已添加到 agent.py，支持启动窗口程序
 6. **完整自动化脚本** - `automate_wechat.py` 演示从启动到创建运行小游戏的完整流程
+7. **环境限制发现**: ClawUI 自动化需要在图形会话中运行（AT-SPI 和 X11 后端都需要访问图形总线）。不能从 PTY/headless 会话直接控制 GUI。提供了 `run_wechat_auto.sh` 包装器用于在桌面终端一键启动。
 
 ## 待办（需要外部输入）
-- **微信开发者工具完整测试**: 等待手动启动微信开发者工具窗口
-  - 启动方式: 从桌面菜单运行 "微信开发者工具" 或执行 `wechat-devtools`
-  - 一旦窗口打开，运行: `python3 ~/.openclaw/workspace/automate_wechat.py`
-  - 脚本会自动: 检测窗口 → 新建项目 → 写入接苹果小游戏代码 → 编译运行 → 截图
-  - 会记录任何兼容性问题并自动尝试修复
+- **微信开发者工具完整测试**: 请在**图形终端**（如 GNOME Terminal）中运行：
+  ```bash
+  cd ~/.openclaw/workspace
+  ./run_wechat_auto.sh
+  ```
+  脚本会自动: 启动微信开发者工具 → 检测窗口 → 新建项目 → 写入接苹果小游戏代码 → 编译运行 → 截图
+- 记录任何兼容性问题并自动尝试修复（目前部分 UI 元素定位可能需要调整）
 
 ## 技术实现更新
 - **launch_app**: 通用应用启动工具，通过 subprocess.Popen 启动任意命令
 - **launch_wechat_devtools**: 专用工具，支持 snap（首选）和 wine（备选）两种方式
-- **环境要求**: 自动化脚本需在图形会话中运行（有 DISPLAY/WAYLAND_DISPLAY）
+- **环境要求**: 自动化脚本需在图形会话中运行（有 DISPLAY/WAYLAND_DISPLAY 和 DBUS_SESSION_BUS_ADDRESS）
+- **测试发现**: 微信开发者工具启动需要约 10-15 秒窗口才出现在 AT-SPI 树中，`automate_wechat.py` 已调整等待超时至 60 秒
