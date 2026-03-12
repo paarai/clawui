@@ -28,7 +28,7 @@
 - [x] 自动登录机制（已实现 GITHUB_TOKEN，待 gh auth 集成）
 
 ## 📋 Next Up
-- [ ] 响应 GitHub Issues（如有）(Checked 2025-03-12: no issues)
+- [ ] 响应 GitHub Issues（如有）(Checked 2026-03-12: no issues)
 - [ ] 完善 README：添加故障排除和最佳实践（已有，但可继续优化）
 - [ ] Firefox Marionette 生产环境部署验证（本地测试通过）
 
