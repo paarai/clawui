@@ -110,6 +110,9 @@ def create_tools():
         {"name": "set_text", "description": "Set text in editable field (by role+name)", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}, "text": {"type": "string"}}, "required": ["text"]}},
         {"name": "wait", "description": "Wait seconds", "input_schema": {"type": "object", "properties": {"seconds": {"type": "number"}}, "required": ["seconds"]}},
         {"name": "vision_find_element", "description": "Find UI element by description using vision AI (experimental)", "input_schema": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]}},
+        # Application launch tools
+        {"name": "launch_app", "description": "Launch an application by command (e.g., 'firefox', 'gedit', or full path). Returns process info.", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string", "description": "Command to execute (with optional args)"}, "args": {"type": "array", "items": {"type": "string"}, "description": "Optional argument list"}}, "required": ["cmd"]}},
+        {"name": "launch_wechat_devtools", "description": "Launch WeChat DevTools (snap or wine). Returns when window appears.", "input_schema": {"type": "object", "properties": {"use_wine": {"type": "boolean", "default": False, "description": "Use Wine backend (if Windows .exe provided)"}}}},
         # CDP tools (browser automation)
         {"name": "cdp_navigate", "description": "Navigate browser to URL (requires Chromium with --remote-debugging-port=9222)", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
         {"name": "cdp_click", "description": "Click element by CSS selector in browser", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"]}},
@@ -259,6 +262,47 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
         elif name == "wait":
             time.sleep(input_data["seconds"])
             return {"type": "text", "text": f"Waited {input_data['seconds']}s"}
+
+        # Application launch tools
+        elif name == "launch_app":
+            cmd = input_data.get("cmd")
+            args = input_data.get("args", [])
+            if not cmd:
+                return {"type": "text", "text": "Missing 'cmd' parameter"}
+            try:
+                import subprocess
+                full_cmd = [cmd] + args
+                proc = subprocess.Popen(full_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                time.sleep(1)  # Give it a moment to start
+                return {"type": "dict", "pid": proc.pid, "cmd": full_cmd, "text": f"Launched: {full_cmd} (PID {proc.pid})"}
+            except Exception as e:
+                return {"type": "text", "text": f"Launch failed: {e}"}
+
+        elif name == "launch_wechat_devtools":
+            use_wine = input_data.get("use_wine", False)
+            try:
+                import subprocess
+                if use_wine:
+                    # Try Wine: look for installer or installed exe
+                    wine_exe = os.path.expanduser("~/wechat-tools/wechatdevtools.exe")
+                    if os.path.isfile(wine_exe):
+                        # Check if already installed via Wine
+                        prefix = os.environ.get("WINEPREFIX", os.path.expanduser("~/.wine"))
+                        installed_exe = os.path.join(prefix, "drive_c", "Program Files (x86)", "微信开发者工具", "wechatdevtools.exe")
+                        if os.path.isfile(installed_exe):
+                            proc = subprocess.Popen(["wine", installed_exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                        else:
+                            # Run installer first
+                            return {"type": "text", "text": f"WeChat not installed in Wine. Please run: wine {wine_exe}"}
+                    else:
+                        return {"type": "text", "text": "No Wine installer found at ~/wechat-tools/wechatdevtools.exe"}
+                else:
+                    # Try snap
+                    proc = subprocess.Popen(["snap", "run", "wechat-devtools"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                time.sleep(2)
+                return {"type": "dict", "pid": proc.pid, "text": f"Launched WeChat DevTools (PID {proc.pid})"}
+            except Exception as e:
+                return {"type": "text", "text": f"Launch WeChat DevTools failed: {e}"}
 
         elif name == "vision_find_element":
             description = input_data.get("description", "").strip()

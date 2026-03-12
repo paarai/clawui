@@ -1,7 +1,9 @@
 """Agent loop - AI-driven GUI automation with hybrid AT-SPI + vision."""
 
 import json
+import re
 import os
+import sys
 
 from .screenshot import take_screenshot, get_screen_size
 from .atspi_helper import (
@@ -13,21 +15,26 @@ from .actions import (
     scroll, drag, focus_window, get_active_window,
 )
 from .backends import get_backend
+from .recorder import Recorder, Player, start_recording, stop_recording, record_action, play_recording
 
+# Global recorder - use module-level functions
 # CDP support (lazy import)
 _cdp_client = None
 
 def _get_cdp():
+    """Get CDP client, auto-launching Chromium if needed."""
     global _cdp_client
-    if _cdp_client is None:
-        try:
-            from .cdp_helper import CDPClient
-            c = CDPClient()
-            if c.is_available():
-                _cdp_client = c
-        except:
-            pass
-    return _cdp_client
+    if _cdp_client is not None and _cdp_client.is_available():
+        return _cdp_client
+    try:
+        from .cdp_helper import get_or_create_cdp_client
+        c = get_or_create_cdp_client()
+        if c and c.is_available():
+            _cdp_client = c
+            return _cdp_client
+    except Exception as e:
+        print(f"[WARN] CDP auto-launch failed: {e}", file=sys.stderr)
+    return None
 
 SYSTEM_PROMPT = """You are a GUI automation agent controlling a Linux desktop.
 
@@ -39,6 +46,7 @@ Available tools:
 - screenshot: Take a screenshot
 - ui_tree: Get AT-SPI UI element tree for an app (or all apps)
 - find_element: Search for UI elements by role and/or name
+- vision_find_element: Find UI element by description using vision AI (experimental). Returns x, y, confidence.
 - click: Click at coordinates (x, y) or on an element
 - double_click: Double-click at coordinates
 - right_click: Right-click at coordinates
@@ -101,6 +109,10 @@ def create_tools():
         {"name": "do_action", "description": "Execute AT-SPI action on element found by role+name", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}, "action": {"type": "string", "default": "click"}}}},
         {"name": "set_text", "description": "Set text in editable field (by role+name)", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}, "text": {"type": "string"}}, "required": ["text"]}},
         {"name": "wait", "description": "Wait seconds", "input_schema": {"type": "object", "properties": {"seconds": {"type": "number"}}, "required": ["seconds"]}},
+        {"name": "vision_find_element", "description": "Find UI element by description using vision AI (experimental)", "input_schema": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]}},
+        # Application launch tools
+        {"name": "launch_app", "description": "Launch an application by command (e.g., 'firefox', 'gedit', or full path). Returns process info.", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string", "description": "Command to execute (with optional args)"}, "args": {"type": "array", "items": {"type": "string"}, "description": "Optional argument list"}}, "required": ["cmd"]}},
+        {"name": "launch_wechat_devtools", "description": "Launch WeChat DevTools (snap or wine). Returns when window appears.", "input_schema": {"type": "object", "properties": {"use_wine": {"type": "boolean", "default": False, "description": "Use Wine backend (if Windows .exe provided)"}}}},
         # CDP tools (browser automation)
         {"name": "cdp_navigate", "description": "Navigate browser to URL (requires Chromium with --remote-debugging-port=9222)", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
         {"name": "cdp_click", "description": "Click element by CSS selector in browser", "input_schema": {"type": "object", "properties": {"selector": {"type": "string"}}, "required": ["selector"]}},
@@ -122,32 +134,61 @@ def create_tools():
         {"name": "ff_screenshot", "description": "Take a screenshot of Firefox page", "input_schema": {"type": "object", "properties": {}}},
         {"name": "ff_list_tabs", "description": "List Firefox tabs/windows", "input_schema": {"type": "object", "properties": {}}},
         {"name": "ff_switch_tab", "description": "Switch Firefox tab by handle", "input_schema": {"type": "object", "properties": {"handle": {"type": "string"}}, "required": ["handle"]}},
+        # Record/Replay tools
+        {"name": "record_start", "description": "Start recording actions into a replayable script", "input_schema": {"type": "object", "properties": {"name": {"type": "string", "description": "Recording name"}, "description": {"type": "string"}}}},
+        {"name": "record_stop", "description": "Stop recording and save to file", "input_schema": {"type": "object", "properties": {"filepath": {"type": "string", "description": "Save path (default: recordings/<name>.json)"}}}},
+        {"name": "replay", "description": "Replay a recorded script", "input_schema": {"type": "object", "properties": {"filepath": {"type": "string", "description": "Path to recording JSON"}, "speed": {"type": "number", "description": "Playback speed multiplier (default 1.0)"}, "dry_run": {"type": "boolean", "description": "Preview without executing"}}, "required": ["filepath"]}},
+        {"name": "list_recordings", "description": "List available recorded scripts", "input_schema": {"type": "object", "properties": {}}},
     ]
 
 
 def execute_tool(name: str, input_data: dict) -> dict:
     """Execute a tool and return result."""
+    result = _execute_tool_inner(name, input_data)
+    # Record action if recording is active (skip meta-tools and screenshots)
+    if name not in ("record_start", "record_stop", "replay", "list_recordings", "screenshot"):
+        record_action(name, input_data, result)
+    return result
+
+
+def _execute_tool_inner(name: str, input_data: dict) -> dict:
+    """Execute a tool and return result."""
     import time
-    from .recorder import record_action
 
     try:
         if name == "screenshot":
             img = take_screenshot()
-            result = {"type": "image", "base64": img}
-            record_action(name, input_data, result)
-            return result
+            return {"type": "image", "base64": img}
 
         elif name == "ui_tree":
             tree = get_ui_tree_summary(app_name=input_data.get("app_name"), max_depth=5)
             return {"type": "text", "text": tree or "(empty UI tree)"}
 
         elif name == "find_element":
-            elements = find_elements(
-                role=input_data.get("role"),
-                name=input_data.get("name"),
-            )
-            text = "\n".join(str(e) for e in elements[:20])
-            return {"type": "text", "text": text or "(no elements found)"}
+            max_attempts = int(os.getenv('CLAWUI_RETRY_MAX', '3'))
+            delay = float(os.getenv('CLAWUI_RETRY_DELAY', '0.5'))
+            for attempt in range(max_attempts):
+                try:
+                    elements = find_elements(
+                        role=input_data.get("role"),
+                        name=input_data.get("name"),
+                    )
+                    if elements:
+                        text = "\n".join(str(e) for e in elements[:20])
+                        return {"type": "text", "text": text}
+                    if attempt < max_attempts - 1:
+                        print(f"[WARN] find_element: no elements (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    return {"type": "text", "text": "(no elements found)"}
+                except Exception as e:
+                    if attempt < max_attempts - 1:
+                        print(f"[WARN] find_element error: {e} (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    return {"type": "text", "text": f"Find element error after {max_attempts} attempts: {e}"}
 
         elif name == "click":
             click(input_data["x"], input_data["y"])
@@ -222,15 +263,115 @@ def execute_tool(name: str, input_data: dict) -> dict:
             time.sleep(input_data["seconds"])
             return {"type": "text", "text": f"Waited {input_data['seconds']}s"}
 
+        # Application launch tools
+        elif name == "launch_app":
+            cmd = input_data.get("cmd")
+            args = input_data.get("args", [])
+            if not cmd:
+                return {"type": "text", "text": "Missing 'cmd' parameter"}
+            try:
+                import subprocess
+                full_cmd = [cmd] + args
+                proc = subprocess.Popen(full_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                time.sleep(1)  # Give it a moment to start
+                return {"type": "dict", "pid": proc.pid, "cmd": full_cmd, "text": f"Launched: {full_cmd} (PID {proc.pid})"}
+            except Exception as e:
+                return {"type": "text", "text": f"Launch failed: {e}"}
+
+        elif name == "launch_wechat_devtools":
+            use_wine = input_data.get("use_wine", False)
+            try:
+                import subprocess
+                if use_wine:
+                    # Try Wine: look for installer or installed exe
+                    wine_exe = os.path.expanduser("~/wechat-tools/wechatdevtools.exe")
+                    if os.path.isfile(wine_exe):
+                        # Check if already installed via Wine
+                        prefix = os.environ.get("WINEPREFIX", os.path.expanduser("~/.wine"))
+                        installed_exe = os.path.join(prefix, "drive_c", "Program Files (x86)", "微信开发者工具", "wechatdevtools.exe")
+                        if os.path.isfile(installed_exe):
+                            proc = subprocess.Popen(["wine", installed_exe], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                        else:
+                            # Run installer first
+                            return {"type": "text", "text": f"WeChat not installed in Wine. Please run: wine {wine_exe}"}
+                    else:
+                        return {"type": "text", "text": "No Wine installer found at ~/wechat-tools/wechatdevtools.exe"}
+                else:
+                    # Try snap
+                    proc = subprocess.Popen(["snap", "run", "wechat-devtools"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                time.sleep(2)
+                return {"type": "dict", "pid": proc.pid, "text": f"Launched WeChat DevTools (PID {proc.pid})"}
+            except Exception as e:
+                return {"type": "text", "text": f"Launch WeChat DevTools failed: {e}"}
+
+        elif name == "vision_find_element":
+            description = input_data.get("description", "").strip()
+            if not description:
+                return {"type": "text", "text": "Missing 'description' parameter"}
+            try:
+                from .vision_backend import VisionBackend
+            except ImportError:
+                return {"type": "text", "text": "VisionBackend not available"}
+            img = take_screenshot()
+            if not img:
+                return {"type": "text", "text": "Failed to take screenshot"}
+            max_attempts = int(os.getenv('CLAWUI_VISION_RETRY_MAX', '3'))
+            delay = float(os.getenv('CLAWUI_VISION_RETRY_DELAY', '1.0'))
+            for attempt in range(max_attempts):
+                try:
+                    vb = VisionBackend()
+                    prompt = f"Locate the UI element that matches: '{description}'. Return JSON with x, y (center coordinates), and confidence (0-1)."
+                    resp = vb.chat([
+                        {"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}
+                        ]}
+                    ], tools=[], system="You are a vision assistant that returns only JSON with x, y, confidence keys.")
+                    text = resp.get("text", "").strip()
+                    json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL) or re.search(r'\{.*\}', text, re.DOTALL)
+                    if json_match:
+                        json_str = json_match.group(1) if '```' in text else json_match.group(0)
+                        data = json.loads(json_str)
+                        x = data.get("x")
+                        y = data.get("y")
+                        conf = data.get("confidence", 0.5)
+                        if x is not None and y is not None:
+                            return {"type": "dict", "x": x, "y": y, "confidence": conf, "raw": text}
+                    # No valid coordinates produced - retry if possible
+                    if attempt < max_attempts - 1:
+                        print(f"[WARN] vision_find_element: no coordinates (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    return {"type": "text", "text": f"Vision response could not produce coordinates: {text}"}
+                except Exception as e:
+                    if attempt < max_attempts - 1:
+                        print(f"[WARN] vision_find_element error: {e} (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    return {"type": "text", "text": f"Vision error after {max_attempts} attempts: {e}"}
+
         # CDP tools
         elif name == "cdp_navigate":
             cdp = _get_cdp()
             if not cdp:
                 return {"type": "text", "text": "CDP not available. Start Chromium with --remote-debugging-port=9222"}
-            cdp.navigate(input_data["url"])
-            time.sleep(2)
-            title = cdp.get_page_title()
-            return {"type": "text", "text": f"Navigated to {input_data['url']} - Title: {title}"}
+            max_attempts = int(os.getenv('CLAWUI_CDP_RETRY_MAX', '3'))
+            delay = float(os.getenv('CLAWUI_CDP_RETRY_DELAY', '1.0'))
+            for attempt in range(max_attempts):
+                try:
+                    cdp.navigate(input_data["url"])
+                    time.sleep(2)
+                    title = cdp.get_page_title()
+                    return {"type": "text", "text": f"Navigated to {input_data['url']} - Title: {title}"}
+                except Exception as e:
+                    if attempt < max_attempts - 1:
+                        print(f"[WARN] cdp_navigate error: {e} (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    return {"type": "text", "text": f"CDP navigate failed after {max_attempts} attempts: {e}"}
 
         elif name == "cdp_click":
             cdp = _get_cdp()
@@ -380,6 +521,40 @@ def execute_tool(name: str, input_data: dict) -> dict:
                 return {"type": "text", "text": "Marionette not available"}
             ok = mc.switch_to_window(input_data["handle"])
             return {"type": "text", "text": f"Switched: {ok}"}
+
+        # Record/Replay tools
+        elif name == "record_start":
+            _recorder.start(
+                name=input_data.get("name", ""),
+                description=input_data.get("description", ""),
+            )
+            return {"type": "text", "text": f"Recording started: {_recorder.metadata['name']}"}
+
+        elif name == "record_stop":
+            script = _recorder.stop()
+            rec_dir = os.path.join(os.path.dirname(__file__), "..", "recordings")
+            filepath = input_data.get("filepath") or os.path.join(rec_dir, f"{script['metadata']['name']}.json")
+            saved = _recorder.save(filepath)
+            return {"type": "text", "text": f"Recording saved: {saved} ({len(script['actions'])} actions)"}
+
+        elif name == "replay":
+            player = ActionPlayer(execute_fn=execute_tool)
+            script = player.load(input_data["filepath"])
+            speed = input_data.get("speed", 1.0)
+            dry_run = input_data.get("dry_run", False)
+            results = player.replay(script, speed=speed, dry_run=dry_run)
+            summary = f"Replayed {len(results)} actions"
+            errors = [r for r in results if r["result"].get("type") == "error"]
+            if errors:
+                summary += f" ({len(errors)} errors)"
+            return {"type": "text", "text": summary}
+
+        elif name == "list_recordings":
+            recs = list_recordings()
+            if not recs:
+                return {"type": "text", "text": "No recordings found"}
+            lines = [f"- {r['name']}: {r['actions']} actions ({r['created']})" for r in recs]
+            return {"type": "text", "text": "\n".join(lines)}
 
         else:
             return {"type": "text", "text": f"Unknown tool: {name}"}
