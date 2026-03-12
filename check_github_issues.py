@@ -67,7 +67,9 @@ def method_gh_cli():
 def method_cdp_fallback():
     """Use CDP to navigate, screenshot, and vision-extract issues."""
     try:
-        from src.cdp_helper import CDPClient
+        # Use the proper import path for the CDP client from the skill
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ClawUI/skills/gui-automation'))
+        from src.cdp_helper import get_or_create_cdp_client
     except ImportError as e:
         return False, f"CDP import failed: {e}"
 
@@ -75,29 +77,14 @@ def method_cdp_fallback():
     os.makedirs(screenshot_dir, exist_ok=True)
     screenshot_path = os.path.join(screenshot_dir, f"issues_{int(time.time())}.png")
 
-    client = CDPClient()
-    if not client.is_available():
-        # Try to launch Chromium
-        try:
-            subprocess.Popen([
-                'snap', 'run', 'chromium',
-                '--remote-debugging-port=9222',
-                '--remote-allow-origins=*',
-                '--no-first-run',
-                'about:blank'
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            for _ in range(10):
-                if client.is_available():
-                    break
-                time.sleep(1)
-            else:
-                return False, "Failed to start Chromium"
-        except Exception as e:
-            return False, f"Chromium launch failed: {e}"
+    # Use the unified client getter which will auto-launch if needed
+    client = get_or_create_cdp_client()
+    if not client:
+        return False, "No CDP browser available and auto-launch failed"
 
     try:
         client.navigate("https://github.com/longgo1001/clawui/issues")
-        time.sleep(3)  # Wait for load
+        time.sleep(3)  # Wait for page to load
         b64 = client.take_screenshot()
         if not b64:
             return False, "Screenshot returned no data"
@@ -108,6 +95,8 @@ def method_cdp_fallback():
 
         # Attempt vision-based extraction
         try:
+            # Reuse the skill's vision backend if available
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'ClawUI/skills/gui-automation'))
             from src.vision_backend import VisionBackend
             vb = VisionBackend()
             prompt = "List all open GitHub issues from this screenshot. For each issue, output exactly: '#<number>: <title>' on its own line. If none, say 'No open issues.'"
