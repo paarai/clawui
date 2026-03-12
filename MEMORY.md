@@ -140,3 +140,4 @@
 - **launch_wechat_devtools**: 专用工具，支持 snap（首选）和 wine（备选）两种方式
 - **环境要求**: 自动化脚本需在图形会话中运行（有 DISPLAY/WAYLAND_DISPLAY 和 DBUS_SESSION_BUS_ADDRESS）
 - **测试发现**: 微信开发者工具启动需要约 10-15 秒窗口才出现在 AT-SPI 树中，`automate_wechat.py` 已调整等待超时至 60 秒
+- **系统健康检查**: 新增 `tools/check_system_health.py`，用于验证所有自动化后端（AT-SPI, X11, CDP, Marionette, Vision）的可用性和运行状态。
