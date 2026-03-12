@@ -102,7 +102,6 @@ def create_tools():
         {"name": "activate_window", "description": "Activate/focus a window by title (supports partial match)", "input_schema": {"type": "object", "properties": {"title": {"type": "string"}, "title_contains": {"type": "string"}}}},
         {"name": "wait_for_window", "description": "Wait for a window with given title (or partial title) to appear, returns window info", "input_schema": {"type": "object", "properties": {"title": {"type": "string"}, "title_contains": {"type": "string"}, "timeout": {"type": "number", "default": 30}}}},
         {"name": "describe_screen", "description": "Get a textual description of what's on screen using vision AI", "input_schema": {"type": "object", "properties": {"detail": {"type": "string", "enum": ["brief", "detailed"], "default": "brief"}}}},
-        {"name": "click_template", "description": "Click on a UI element based on a learned template. Input: app (template name), element (key in template), optional: offset_x/y (pixel offset)", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}, "element": {"type": "string"}}, "optional": ["offset_x", "offset_y"]}},
         {"name": "click", "description": "Click at coordinates", "input_schema": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
         {"name": "double_click", "description": "Double-click", "input_schema": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
         {"name": "right_click", "description": "Right-click", "input_schema": {"type": "object", "properties": {"x": {"type": "integer"}, "y": {"type": "integer"}}, "required": ["x", "y"]}},
@@ -381,64 +380,6 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 return {"type": "text", "text": text}
             except Exception as e:
                 return {"type": "text", "text": f"describe_screen error: {e}"}
-
-        # Template-based clicking (fallback when AT-SPI/vision not available)
-        elif name == "click_template":
-            app_name = input_data.get("app")
-            element_name = input_data.get("element")
-            if not app_name or not element_name:
-                return {"type": "text", "text": "Missing 'app' or 'element'"}
-            try:
-                import json
-                template_path = os.path.join(os.path.dirname(__file__), 'templates', f'{app_name}.json')
-                if not os.path.exists(template_path):
-                    return {"type": "text", "text": f"Template not found: {template_path}"}
-                with open(template_path, 'r', encoding='utf-8') as f:
-                    template = json.load(f)
-                
-                elements = template.get('elements', {})
-                if element_name not in elements:
-                    available = ', '.join(elements.keys())
-                    return {"type": "text", "text": f"Element '{element_name}' not in template. Available: {available}"}
-                
-                rel_pos = elements[element_name]
-                rel_x, rel_y = rel_pos['x'], rel_pos['y']
-                
-                # Find target window
-                from src.x11_helper import list_windows as x11_list_windows
-                windows = x11_list_windows()
-                # Match by window title (stored in template)
-                win_title = template.get('window_title', '')
-                target_win = None
-                for w in windows:
-                    if win_title.lower() in w.title.lower():
-                        target_win = w
-                        break
-                if not target_win and win_title:
-                    # Fallback: try app name match
-                    for w in windows:
-                        if app_name.lower() in w.title.lower():
-                            target_win = w
-                            break
-                if not target_win:
-                    return {"type": "text", "text": f"Window for app '{app_name}' not found"}
-                
-                # Compute absolute click position
-                click_x = target_win.x + int(rel_x * target_win.width)
-                click_y = target_win.y + int(rel_y * target_win.height)
-                
-                # Optional offsets
-                offset_x = input_data.get("offset_x", 0)
-                offset_y = input_data.get("offset_y", 0)
-                click_x += offset_x
-                click_y += offset_y
-                
-                # Perform click using low-level click function
-                from src.actions import click
-                click(click_x, click_y)
-                return {"type": "dict", "x": click_x, "y": click_y, "target_window": target_win.title, "text": f"Clicked {element_name} at ({click_x},{click_y})"}
-            except Exception as e:
-                return {"type": "text", "text": f"click_template error: {e}"}
 
         # B. High-level task automation (plan-and-execute)
         elif name == "plan_and_execute":
