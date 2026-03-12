@@ -114,4 +114,16 @@
 ## 状态
 - **工作区**: 干净（所有更改已提交推送）。
 - **未提交变更**: 无。
-- **新增目录**: `tools/` 已纳入版本控制。
+- **新增目录**: `scripts/` (验证工具), `tools/` 已纳入版本控制。
+
+## 近期行动摘要 (2026-03-12)
+1. **代码审核** - 发现并修复 cdp_click_at、marionette _disconnect、test_vision_tool.py 损坏问题
+2. **CDP 小游戏演示** - demo_mini_game_cdp.py 验证浏览器自动化能力
+3. **Wine 环境搭建** - 为在 Linux 运行微信开发者工具准备容器
+4. **安装辅助脚本** - `setup_wechat.py` 用于检测/安装/启动微信开发者工具（Wine）
+
+## 待办（需要外部输入）
+- **微信开发者工具完整测试**: 等待手动提供 wechatdevtools.exe 安装包
+  - 可用路径: `~/wechat-tools/wechatdevtools.exe` 或任意本地路径
+  - 运行: `python3 setup_wechat.py install <path_to_exe>`
+  - 然后运行自动化测试脚本（待创建）
