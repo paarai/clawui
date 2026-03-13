@@ -117,6 +117,7 @@
 - test_vision_tool.py: 重建并修复
 - click_template: 修复重复注册和处理块 (工具数量从48→47)
 - 新增验证脚本: `scripts/validate_python_files.py`
+- agent.py: 修复4个关键 bug: find_element 变量遮蔽、导入路径不一致 (src. → .)、consecutive_errors 重置位置错误、result 变量名冲突
 
 ## 状态
 - **工作区**: 有未提交的更改需要审查。
