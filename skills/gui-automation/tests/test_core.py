@@ -184,6 +184,37 @@ def test_perception_routing():
     return True
 
 
+# === Firefox Marionette Backend ===
+def test_marionette_smoke():
+    """Smoke test: connect to Firefox Marionette, navigate, get title."""
+    # Only run if DISPLAY is available (requires GUI session)
+    if not os.environ.get("DISPLAY"):
+        return "SKIP"
+    from src.marionette_helper import get_or_create_marionette_client
+    client = get_or_create_marionette_client()
+    if not client or not client.is_available():
+        return "SKIP"  # Firefox not running with --marionette
+    try:
+        session = client.new_session()
+        if not session:
+            return "SKIP"
+        client.navigate("https://example.com")
+        # Wait a bit for load
+        time.sleep(2)
+        title = client.get_title() or ""
+        url = client.get_url() or ""
+        assert "example" in title.lower() or "example" in url.lower(), f"Unexpected page: {title} / {url}"
+        # Clean up: close window (session remains reusable)
+        try:
+            client.close_window()
+        except:
+            pass
+        return True
+    except Exception as e:
+        # Any failure is a test failure (not skip) because it indicates broken backend
+        raise AssertionError(f"Marionette smoke test failed: {e}") from e
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("ClawUI Core Test Suite")
@@ -210,6 +241,9 @@ if __name__ == "__main__":
 
     print("\n🪟 X11 Backend:")
     test("list windows", test_x11_list_windows)
+
+    print("\n🌐 Firefox Marionette Backend:")
+    test("Marionette smoke test", test_marionette_smoke)
 
     print("\n📸 Screenshot:")
     test("take screenshot", test_screenshot)

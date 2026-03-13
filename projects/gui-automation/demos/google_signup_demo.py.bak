@@ -11,7 +11,6 @@ import time
 import random
 import string
 import base64
-import json
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -24,11 +23,10 @@ def random_username():
 def wait_for_element(cdp, selector, timeout=20):
     """Wait for an element to appear in the DOM, including inside iframes."""
     start = time.time()
-    # Safely embed selector as a JS string literal using JSON
-    sel_js = json.dumps(selector)
+    # Ensure selector is properly quoted in JS: use outer double quotes
     check_script = f"""
     (function() {{
-        const sel = {sel_js};
+        const sel = {repr(selector)};
         if (document.querySelector(sel)) return true;
         const iframes = document.querySelectorAll('iframe');
         for (let i = 0; i < iframes.length; i++) {{
@@ -59,6 +57,7 @@ def wait_for_element(cdp, selector, timeout=20):
 
 def click_next_button(cdp):
     """Click the 'Next' button using coordinate-based click for reliability."""
+    # Try to find Next button text/position via JS, checking both main doc and iframes
     find_script = """
     (function() {
       function findButton(doc) {
@@ -80,8 +79,10 @@ def click_next_button(cdp):
         }
         return null;
       }
+      // Check main document first
       let result = findButton(document);
       if (result) return result;
+      // Check iframes
       const iframes = document.querySelectorAll('iframe');
       for (let i = 0; i < iframes.length; i++) {
         try {
@@ -94,6 +95,7 @@ def click_next_button(cdp):
     })()
     """
     raw_result = cdp.evaluate(find_script)
+    # Unwrap CDP result: {'result': {'type':..., 'value': ...}}
     result = None
     if raw_result and isinstance(raw_result, dict):
         if 'result' in raw_result:
@@ -113,6 +115,7 @@ def click_next_button(cdp):
         return True
     else:
         print("  ERROR: Could not locate Next button")
+        # Dump some info for debugging
         debug_raw = cdp.evaluate("Array.from(document.querySelectorAll('button')).map(b=>({text:b.textContent.trim(), disabled:b.disabled})).slice(0,5)")
         debug = None
         if debug_raw and isinstance(debug_raw, dict):
@@ -136,87 +139,50 @@ def main():
     first = "Test"
     last = "User"
     year = "1990"
-    month_text = "January"
+    month_text = "January"  # will click by visible text
     gender = "Male"
 
     screens_dir = "screenshots/google_demo"
+    import os
     os.makedirs(screens_dir, exist_ok=True)
 
     def screenshot(step):
         b64 = cdp.take_screenshot()
         if b64:
             path = f"{screens_dir}/step_{step}.png"
-            # b64 is a base64 string; convert to bytes
             with open(path, "wb") as f:
                 f.write(base64.b64decode(b64))
             print(f"Screenshot saved: {path}")
 
-    # Step 1: Navigate
+    # Step 1: Navigate to signup
     print("Navigating to Google signup...")
     cdp.navigate("https://accounts.google.com/signup")
-    time.sleep(6)
+    time.sleep(6)  # Increased wait for page to fully load
     screenshot(1)
 
     # Step 2: Name
-    print("Waiting for firstName field...")
+    print("Waiting for name inputs...")
     if not wait_for_element(cdp, "input[name='firstName']", timeout=15):
         print("ERROR: firstName input not found")
+        # Debug: dump page info
         html_raw = cdp.evaluate("document.documentElement.outerHTML")
         html = None
         if html_raw and isinstance(html_raw, dict):
             html = html_raw.get('result', {}).get('value', '')
         if html:
-            with open(f"{screens_dir}/page.html", "w", encoding="utf-8") as f:
+            with open("screenshots/google_demo/page.html", "w", encoding="utf-8") as f:
                 f.write(html)
-            print("Page HTML saved (snippet):")
+            print("Page HTML saved to screenshots/google_demo/page.html (snippet:)")
             print(html[:2000])
         else:
             print("Could not retrieve page HTML")
         return
-
-    # Type first and last name using helper that handles iframe
-    print("Filling name fields...")
-    def type_in_field(selector, text):
-        focus_script = f"""
-        (function() {{
-            const sel = {json.dumps(selector)};
-            function findAndFocus(doc) {{
-                let el = doc.querySelector(sel);
-                if (el) {{ el.click(); el.focus(); return true; }}
-                return false;
-            }}
-            if (findAndFocus(document)) return true;
-            const iframes = document.querySelectorAll('iframe');
-            for (let i = 0; i < iframes.length; i++) {{
-                try {{
-                    const doc = iframes[i].contentDocument;
-                    if (findAndFocus(doc)) return true;
-                }} catch (e) {{}}
-            }}
-            return false;
-        }})()
-        """
-        raw = cdp.evaluate(focus_script)
-        focused = False
-        if raw and isinstance(raw, dict):
-            if 'result' in raw:
-                val = raw['result'].get('value')
-                focused = bool(val)
-            else:
-                focused = bool(raw)
-        else:
-            focused = bool(raw)
-        if not focused:
-            return False
-        time.sleep(0.3)
-        cdp.dispatch_key(text)
-        return True
-
-    if not type_in_field("input[name='firstName']", first):
+    print("Filling name...")
+    if not cdp.type_in_element("input[name='firstName']", first):
         print("WARNING: Could not fill firstName")
-    if not type_in_field("input[name='lastName']", last):
+    if not cdp.type_in_element("input[name='lastName']", last):
         print("WARNING: Could not fill lastName")
-    time.sleep(2)
+    time.sleep(2)  # Wait for any dynamic changes
 
     if not click_next_button(cdp):
         print("ERROR: Could not click Next on name page")
@@ -224,23 +190,26 @@ def main():
 
     # Step 3: Birthday & Gender
     print("Filling birthday and gender...")
+    # Year (standard input)
     cdp.type_in_element("input[name='year']", year)
-
+    # Month: custom dropdown; click the month selector, then pick month by text
+    # Try to click the month dropdown via aria-label
     month_dropdown = "div[aria-label*='Month' i]"
     if not cdp.click_element(month_dropdown):
         cdp.evaluate("document.querySelector('[aria-label*=\"Month\" i]')?.click()")
         print("Clicked month dropdown via JS")
     time.sleep(1)
-
+    # Select month option
     month_js = f"""
     const options = Array.from(document.querySelectorAll('div[role="option"], div[aria-label*="month" i], span[role="option"]'));
-    const opt = options.find(e => e.textContent.trim() === {json.dumps(month_text)});
+    const opt = options.find(e => e.textContent.trim() === '{month_text}');
     if (opt) {{ opt.click(); return true; }}
     return false;
     """
     if not cdp.evaluate(month_js):
         print(f"WARNING: Could not select month {month_text}")
-
+    time.sleep(1)
+    # Gender: click the radio corresponding to 'Male'
     gender_js = """
     const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
     const male = radios.find(r => r.value.toLowerCase().includes('male') || r.getAttribute('aria-label')?.toLowerCase().includes('male'));
@@ -250,14 +219,13 @@ def main():
     if not cdp.evaluate(gender_js):
         print("WARNING: Could not select gender Male")
     time.sleep(1)
-
     if not click_next_button(cdp):
         print("ERROR: Could not click Next on birthday page")
         return
     time.sleep(3)
     screenshot(3)
 
-    # Step 4: Username
+    # Step 4: Choose username
     print(f"Entering username: {username}")
     cdp.type_in_element("input[name='username']", username)
     if not click_next_button(cdp):
