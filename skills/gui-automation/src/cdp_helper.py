@@ -444,7 +444,13 @@ def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> Opti
 
     for cmd in candidates:
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Start browser in its own process group to avoid being killed when parent exits
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True  # Create new session, detach from parent
+            )
             # Wait a bit for browser to start and open CDP endpoint
             time.sleep(3)
             if _is_port_listening(port):

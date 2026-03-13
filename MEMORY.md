@@ -115,6 +115,7 @@
 - cdp_click_at: 非方法 → 改为 dispatch_mouse (2处)
 - Marionette: _disconnect() → close()
 - test_vision_tool.py: 重建并修复
+- click_template: 修复重复注册和处理块 (工具数量从48→47)
 - 新增验证脚本: `scripts/validate_python_files.py`
 
 ## 状态
@@ -158,6 +159,7 @@
 - **click_template**: 加载 `templates/<app>.json`, 匹配窗口, 计算绝对坐标并点击
 - **find_text**: 基于 OCR (RapidOCR/Tesseract) 的文字查找工具, 返回坐标列表
 - **ocr_tool.py**: 新增 OCR 后端实现, 优先使用 RapidOCR (快 ~150ms), 回退到 Tesseract (~500ms)
+- **OCR 性能优化**: RapidOCR 引擎模块级单例初始化，避免重复加载模型 (~18s)，后续调用仅 ~0.2s，解决性能瓶颈
 - **wait_for_element**: AT-SPI 元素轮询等待工具，指数退避策略，提高自动化可靠性
 - **环境要求**: 自动化需在图形会话运行 (DISPLAY/WAYLAND_DISPLAY/DBUS_SESSION_BUS_ADDRESS)
 - **依赖**: OCR 功能需要手动安装 rapidocr-onnxruntime (推荐) 或 tesseract-ocr + tesseract-ocr-chi-sim
