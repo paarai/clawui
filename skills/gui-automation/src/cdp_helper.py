@@ -426,35 +426,38 @@ class CDPClient:
 _launched_browser_processes = {}
 
 
-def _profile_dirs_for_launch(port: int) -> List[str]:
-    """Candidate Chromium profile directories (best-effort by environment)."""
+def _is_snap_launcher(launcher: List[str]) -> bool:
+    """Check if a launcher command uses snap."""
+    return 'snap' in launcher
+
+
+def _profile_dirs_for_launcher(launcher: List[str], port: int) -> List[str]:
+    """Return profile dirs appropriate for this launcher type."""
     dirs: List[str] = []
+    is_snap = _is_snap_launcher(launcher)
 
-    # Stable project profile first
-    dirs.append(DEFAULT_USER_DATA_DIR)
+    if is_snap:
+        # Snap Chromium can only write inside ~/snap/chromium/
+        snap_common = os.path.join(os.path.expanduser("~"), "snap", "chromium", "common")
+        if os.path.isdir(snap_common):
+            dirs.append(os.path.join(snap_common, f"clawui-profile-{port}"))
+        # Snap can also use /tmp
+        dirs.append(os.path.join(tempfile.gettempdir(), f"clawui-cdp-snap-{port}"))
+    else:
+        # Non-snap: prefer stable project profile
+        dirs.append(DEFAULT_USER_DATA_DIR)
+        # Fallback: temp dir
+        dirs.append(os.path.join(tempfile.gettempdir(), f"clawui-cdp-{port}"))
 
-    # Snap Chromium prefers ~/snap/chromium/common
-    snap_common = os.path.join(os.path.expanduser("~"), "snap", "chromium", "common")
-    if os.path.isdir(snap_common):
-        dirs.append(os.path.join(snap_common, f"clawui-profile-{port}"))
-
-    # Last resort: temp dir (avoids singleton lock and permission edge cases)
-    dirs.append(tempfile.mkdtemp(prefix=f"clawui-cdp-{port}-"))
-
-    # Keep order, remove duplicates
-    seen = set()
-    unique_dirs = []
-    for d in dirs:
-        if d not in seen:
-            unique_dirs.append(d)
-            seen.add(d)
-    return unique_dirs
+    return dirs
 
 
 def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> Optional[subprocess.Popen]:
     """Launch Chromium/Chrome with remote debugging enabled.
 
     Uses headless mode only to avoid X server dependencies.
+    Smart profile selection: snap launchers get snap-accessible paths,
+    native launchers get standard paths. Avoids SingletonLock permission errors.
 
     Returns the Popen object if successful, None otherwise.
     """
@@ -471,12 +474,21 @@ def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> Opti
         ['chromium-browser', '--no-sandbox', '--headless=new'],
     ]
 
-    for profile_dir in _profile_dirs_for_launch(port):
+    for launcher in launcher_candidates:
+      for profile_dir in _profile_dirs_for_launcher(launcher, port):
         try:
             os.makedirs(profile_dir, exist_ok=True)
         except Exception as e:
             print(f"[DEBUG] Cannot prepare profile dir {profile_dir}: {e}", file=sys.stderr)
             continue
+
+        # Clean stale singleton lock
+        lock_path = os.path.join(profile_dir, "SingletonLock")
+        if os.path.lexists(lock_path):
+            try:
+                os.remove(lock_path)
+            except OSError:
+                pass
 
         base_args = [
             f'--remote-debugging-port={port}',
@@ -487,36 +499,35 @@ def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> Opti
             url,
         ]
 
-        for launcher in launcher_candidates:
-            cmd = launcher + base_args
+        cmd = launcher + base_args
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True
+            )
+            time.sleep(3)
+            if _is_port_listening(port):
+                _launched_browser_processes[port] = proc
+                return proc
+            time.sleep(2)
+            if _is_port_listening(port):
+                _launched_browser_processes[port] = proc
+                return proc
             try:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    start_new_session=True
-                )
-                time.sleep(3)
-                if _is_port_listening(port):
-                    _launched_browser_processes[port] = proc
-                    return proc
-                time.sleep(2)
-                if _is_port_listening(port):
-                    _launched_browser_processes[port] = proc
-                    return proc
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=2)
-                except Exception:
-                    pass
-                _, stderr = proc.communicate()
-                if stderr:
-                    print(f"[DEBUG] Command '{' '.join(cmd)}' failed: {stderr.decode('utf-8', 'ignore')[:240]}", file=sys.stderr)
-            except FileNotFoundError:
-                continue
-            except Exception as e:
-                print(f"[DEBUG] Exception launching '{' '.join(cmd)}': {e}", file=sys.stderr)
-                continue
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                pass
+            _, stderr = proc.communicate()
+            if stderr:
+                print(f"[DEBUG] Command '{' '.join(cmd)}' failed: {stderr.decode('utf-8', 'ignore')[:240]}", file=sys.stderr)
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            print(f"[DEBUG] Exception launching '{' '.join(cmd)}': {e}", file=sys.stderr)
+            continue
 
     return None
 
