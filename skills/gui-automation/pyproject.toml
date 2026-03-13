@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 keywords = ["gui", "automation", "desktop", "browser", "linux", "ai", "at-spi", "cdp"]
 classifiers = [
     "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
@@ -27,10 +28,17 @@ dependencies = [
 anthropic = ["anthropic>=0.40.0"]
 openai = ["openai>=1.0.0"]
 gemini = ["google-generativeai>=0.5.0"]
-all = ["anthropic>=0.40.0", "openai>=1.0.0", "google-generativeai>=0.5.0"]
+all = [
+    "anthropic>=0.40.0",
+    "openai>=1.0.0",
+    "google-generativeai>=0.5.0",
+]
+dev = [
+    "pytest>=7.0",
+]
 
 [project.scripts]
-clawui = "src.main:main"
+clawui = "src.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/longgo1001/clawui"
