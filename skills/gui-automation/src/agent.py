@@ -15,7 +15,7 @@ from .actions import (
     scroll, drag, focus_window, get_active_window,
 )
 from .backends import get_backend
-from .recorder import Recorder, Player, start_recording, stop_recording, record_action, play_recording
+from .recorder import start_recording, stop_recording, record_action, play_recording
 from .github_integration import create_github_repo
 
 # Global recorder - use module-level functions
@@ -35,6 +35,38 @@ def _get_cdp():
             return _cdp_client
     except Exception as e:
         print(f"[WARN] CDP auto-launch failed: {e}", file=sys.stderr)
+    return None
+
+def _vision_find(description: str) -> tuple | None:
+    """Use vision backend to locate UI element by description. Returns (x, y, confidence) or None."""
+    try:
+        from .vision_backend import VisionBackend
+        img = take_screenshot()
+        if not img:
+            print("[WARN] Vision fallback: screenshot failed")
+            return None
+        vb = VisionBackend()
+        prompt = f"Locate the UI element that matches: '{description}'. Return JSON with x, y (center coordinates), and confidence (0-1)."
+        resp = vb.chat([
+            {"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img}"}}
+            ]}
+        ], tools=[], system="You are a vision assistant that returns only JSON with x, y, confidence keys.")
+        text = resp.get("text", "").strip()
+        json_match = re.search(r'```json\\s*(\\{.*?\\})\\s*```', text, re.DOTALL) or re.search(r'\\{.*\\}', text, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1) if '```' in text else json_match.group(0)
+            data = json.loads(json_str)
+            x = data.get("x")
+            y = data.get("y")
+            conf = data.get("confidence", 0.5)
+            if x is not None and y is not None:
+                return (int(x), int(y), float(conf))
+        else:
+            print(f"[WARN] Vision fallback: no JSON in response: {text[:100]}")
+    except Exception as e:
+        print(f"[WARN] Vision fallback error: {e}")
     return None
 
 SYSTEM_PROMPT = """You are a GUI automation agent controlling a Linux desktop.
@@ -1023,37 +1055,41 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
 
         # Record/Replay tools
         elif name == "record_start":
-            _recorder.start(
-                name=input_data.get("name", ""),
-                description=input_data.get("description", ""),
-            )
-            return {"type": "text", "text": f"Recording started: {_recorder.metadata['name']}"}
+            rec_dir = os.path.join(os.path.dirname(__file__), "..", "recordings")
+            os.makedirs(rec_dir, exist_ok=True)
+            rec_name = (input_data.get("name") or "").strip()
+            if rec_name:
+                safe_name = re.sub(r"[^a-zA-Z0-9._-]+", "_", rec_name)
+                filepath = os.path.join(rec_dir, f"{safe_name}.json")
+            else:
+                filepath = None
+            rec = start_recording(filepath=filepath)
+            return {"type": "text", "text": f"Recording started: {rec.filepath}"}
 
         elif name == "record_stop":
-            script = _recorder.stop()
-            rec_dir = os.path.join(os.path.dirname(__file__), "..", "recordings")
-            filepath = input_data.get("filepath") or os.path.join(rec_dir, f"{script['metadata']['name']}.json")
-            saved = _recorder.save(filepath)
-            return {"type": "text", "text": f"Recording saved: {saved} ({len(script['actions'])} actions)"}
+            saved = stop_recording()
+            if not saved:
+                return {"type": "text", "text": "No active recording session"}
+            return {"type": "text", "text": f"Recording saved: {saved}"}
 
         elif name == "replay":
-            player = ActionPlayer(execute_fn=execute_tool)
-            script = player.load(input_data["filepath"])
-            speed = input_data.get("speed", 1.0)
-            dry_run = input_data.get("dry_run", False)
-            results = player.replay(script, speed=speed, dry_run=dry_run)
-            summary = f"Replayed {len(results)} actions"
-            errors = [r for r in results if r["result"].get("type") == "error"]
-            if errors:
-                summary += f" ({len(errors)} errors)"
-            return {"type": "text", "text": summary}
+            filepath = input_data.get("filepath")
+            if not filepath:
+                return {"type": "text", "text": "Missing 'filepath'"}
+            speed = float(input_data.get("speed", 1.0) or 1.0)
+            dry_run = bool(input_data.get("dry_run", False))
+            delay = 0.5 / speed if speed > 0 else 0.0
+            results = play_recording(filepath, execute_tool, delay=delay, dry_run=dry_run)
+            return {"type": "text", "text": f"Replayed {len(results)} actions (dry_run={dry_run}, speed={speed})"}
 
         elif name == "list_recordings":
-            recs = list_recordings()
-            if not recs:
+            rec_dir = os.path.join(os.path.dirname(__file__), "..", "recordings")
+            if not os.path.isdir(rec_dir):
                 return {"type": "text", "text": "No recordings found"}
-            lines = [f"- {r['name']}: {r['actions']} actions ({r['created']})" for r in recs]
-            return {"type": "text", "text": "\n".join(lines)}
+            files = sorted([f for f in os.listdir(rec_dir) if f.endswith(".json")])
+            if not files:
+                return {"type": "text", "text": "No recordings found"}
+            return {"type": "text", "text": "\n".join([f"- {f}" for f in files])}
 
         elif name == "github_create_repo":
             repo_name = input_data.get("repo_name")
