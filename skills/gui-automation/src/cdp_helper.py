@@ -19,6 +19,65 @@ DEFAULT_USER_DATA_DIR = os.path.join(
 )
 
 
+def ensure_gui_environment():
+    """
+    Ensure DISPLAY, WAYLAND_DISPLAY, and XAUTHORITY are set for GUI operations.
+    Tries to detect the active graphical session and configure environment.
+    """
+    # If already have these, nothing to do
+    if os.environ.get('DISPLAY') or (os.environ.get('WAYLAND_DISPLAY') and os.environ.get('XAUTHORITY')):
+        return
+
+    # Try to find DISPLAY from X11 sockets
+    if not os.environ.get('DISPLAY'):
+        for i in [0, 1]:
+            if os.path.exists(f'/tmp/.X11-unix/X{i}'):
+                os.environ['DISPLAY'] = f':{i}'
+                print(f'[CDP] Auto-detected DISPLAY={":%d" % i}')
+                break
+
+    # Try to find WAYLAND_DISPLAY
+    if not os.environ.get('WAYLAND_DISPLAY'):
+        # Common Wayland socket in user runtime
+        wayland_sock = '/run/user/1000/wayland-0'
+        if os.path.exists(wayland_sock) or os.path.exists(wayland_sock.replace('1000', str(os.getuid()))):
+            os.environ['WAYLAND_DISPLAY'] = 'wayland-0'
+            print('[CDP] Auto-detected WAYLAND_DISPLAY=wayland-0')
+
+    # Try to find XAUTHORITY
+    if not os.environ.get('XAUTHORITY'):
+        candidates = [
+            os.path.expanduser('~/.Xauthority'),
+            f'/run/user/{os.getuid()}/.mutter-Xwayland-0',
+            f'/run/user/{os.getuid()}/.Xauthority',
+        ]
+        for path in candidates:
+            if os.path.exists(path):
+                os.environ['XAUTHORITY'] = path
+                print(f'[CDP] Auto-detected XAUTHORITY={path}')
+                break
+
+    # If we have DISPLAY but no XAUTHORITY, try to generate one via xauth if available
+    if os.environ.get('DISPLAY') and not os.environ.get('XAUTHORITY'):
+        try:
+            # Use the display we set to generate a new authority file
+            import getpass
+            home = os.path.expanduser('~')
+            xauth_path = os.path.join(home, '.Xauthority')
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(xauth_path), exist_ok=True)
+            # Generate using xauth
+            subprocess.run(['xauth', 'generate', os.environ['DISPLAY'], '.', 'trusted'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.exists(xauth_path):
+                os.environ['XAUTHORITY'] = xauth_path
+                print(f'[CDP] Generated new XAUTHORITY at {xauth_path}')
+        except Exception:
+            pass
+
+# Call it at module import to configure environment
+ensure_gui_environment()
+
+
 class CDPClient:
     """Simple CDP client using HTTP + WebSocket-free approach (via /json endpoints)."""
 
