@@ -153,7 +153,14 @@
 - **click_template**: 加载 `templates/<app>.json`, 匹配窗口, 计算绝对坐标并点击
 - **find_text**: 基于 OCR (RapidOCR/Tesseract) 的文字查找工具, 返回坐标列表
 - **ocr_tool.py**: 新增 OCR 后端实现, 优先使用 RapidOCR (快 ~150ms), 回退到 Tesseract (~500ms)
+- **wait_for_element**: AT-SPI 元素轮询等待工具，指数退避策略，提高自动化可靠性
 - **环境要求**: 自动化需在图形会话运行 (DISPLAY/WAYLAND_DISPLAY/DBUS_SESSION_BUS_ADDRESS)
 - **依赖**: OCR 功能需要手动安装 rapidocr-onnxruntime (推荐) 或 tesseract-ocr + tesseract-ocr-chi-sim
-- **提交**: ClawUI `5fa417b` -> `7d02a3d` (feat: OCR tools + click_template), 本仓库 `49c5222` (docs)
-- **系统健康检查**: 新增 `tools/check_system_health.py`，用于验证所有自动化后端（AT-SPI, X11, CDP, Marionette, Vision）的可用性和运行状态。
+- **系统健康检查**: 新增 `tools/check_system_health.py`，验证所有自动化后端（AT-SPI, X11, CDP, Marionette, Vision）的可用性
+
+## 编程教训 (持续记录)
+- **避免变量遮蔽**: 函数内部避免使用与外部变量同名的参数/变量，会导致逻辑错误（如 `consecutive_errors` 被重置）
+- **Import 路径一致性**: 当代码作为包加载时，使用相对导入 `.` 而非绝对 `src.`，避免 ImportError
+- **变量作用域**: 循环内初始化关键状态变量会抵消其累积效果 — 确保初始化在正确的层级
+- **CDP 点击策略**: 复杂网页（如 Google）推荐使用 `dispatch_mouse` 坐标点击而非 `element.click()`，更可靠且不易被检测
+- **Git 子模块工作流**: 修改子模块内部 → 在子模块内提交 → 拉取远程并变基 → 推送子模块 → 更新父仓库 gitlink → 推送父仓库，避免 diverged 分支冲突
