@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "clawui"
+version = "0.1.0"
+description = "AI-driven desktop and browser automation for Linux"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+keywords = ["gui", "automation", "desktop", "browser", "linux", "ai", "at-spi", "cdp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Desktop Environment",
+]
+dependencies = [
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.40.0"]
+openai = ["openai>=1.0.0"]
+gemini = ["google-generativeai>=0.5.0"]
+all = ["anthropic>=0.40.0", "openai>=1.0.0", "google-generativeai>=0.5.0"]
+
+[project.scripts]
+clawui = "src.main:main"
+
+[project.urls]
+Homepage = "https://github.com/longgo1001/clawui"
+Issues = "https://github.com/longgo1001/clawui/issues"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
