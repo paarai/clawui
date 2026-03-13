@@ -15,45 +15,96 @@ import base64
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.cdp_helper import CDPClient
+from src.cdp_helper import get_or_create_cdp_client
 
 def random_username():
     return "testuser_" + ''.join(random.choices(string.digits, k=8))
 
-def wait_for_navigation(cdp, timeout=10):
-    """Wait for page navigation."""
-    old_url = cdp.get_page_url()
-    for _ in range(timeout):
-        time.sleep(1)
-        new_url = cdp.get_page_url()
-        if new_url != old_url:
+def wait_for_element(cdp, selector, timeout=20):
+    """Wait for an element to appear in the DOM, including inside iframes."""
+    start = time.time()
+    check_script = f"""
+    (function() {{
+        if (document.querySelector('{selector}')) return true;
+        const iframes = document.querySelectorAll('iframe');
+        for (let i = 0; i < iframes.length; i++) {{
+            try {{
+                const doc = iframes[i].contentDocument;
+                if (doc && doc.querySelector('{selector}')) return true;
+            }} catch (e) {{}}
+        }}
+        return false;
+    }})()
+    """
+    while time.time() - start < timeout:
+        raw = cdp.evaluate(check_script)
+        # Unwrap CDP result
+        exists = False
+        if raw and isinstance(raw, dict):
+            if 'result' in raw:
+                val = raw['result'].get('value')
+                exists = bool(val)
+            else:
+                exists = bool(raw)
+        else:
+            exists = bool(raw)
+        if exists:
             return True
+        time.sleep(1)
     return False
 
 def click_next_button(cdp):
     """Click the 'Next' button using coordinate-based click for reliability."""
-    # Try to find Next button text/position via JS
+    # Try to find Next button text/position via JS, checking both main doc and iframes
     find_script = """
     (function() {
-      const btns = Array.from(document.querySelectorAll('button, [role="button"], a[href]'));
-      const next = btns.find(b => {
-        const txt = b.textContent.trim().toLowerCase();
-        return txt.includes('next') || txt.includes('继续') || txt.includes('下一步');
-      });
-      if (next) {
-        const rect = next.getBoundingClientRect();
-        return {
-          text: next.textContent.trim(),
-          x: rect.x + rect.width / 2,
-          y: rect.y + rect.height / 2,
-          width: rect.width,
-          height: rect.height
-        };
+      function findButton(doc) {
+        if (!doc) return null;
+        const btns = Array.from(doc.querySelectorAll('button, [role="button"], a[href]'));
+        const next = btns.find(b => {
+          const txt = b.textContent.trim().toLowerCase();
+          return txt.includes('next') || txt.includes('继续') || txt.includes('下一步');
+        });
+        if (next) {
+          const rect = next.getBoundingClientRect();
+          return {
+            text: next.textContent.trim(),
+            x: rect.x + rect.width / 2,
+            y: rect.y + rect.height / 2,
+            width: rect.width,
+            height: rect.height
+          };
+        }
+        return null;
+      }
+      // Check main document first
+      let result = findButton(document);
+      if (result) return result;
+      // Check iframes
+      const iframes = document.querySelectorAll('iframe');
+      for (let i = 0; i < iframes.length; i++) {
+        try {
+          const doc = iframes[i].contentDocument;
+          result = findButton(doc);
+          if (result) return result;
+        } catch (e) {}
       }
       return null;
     })()
     """
-    result = cdp.evaluate(find_script)
+    raw_result = cdp.evaluate(find_script)
+    # Unwrap CDP result: {'result': {'type':..., 'value': ...}}
+    result = None
+    if raw_result and isinstance(raw_result, dict):
+        if 'result' in raw_result:
+            inner = raw_result['result']
+            if isinstance(inner, dict):
+                result = inner.get('value')
+        else:
+            result = raw_result
+    else:
+        result = raw_result
+
     if result and isinstance(result, dict) and 'x' in result:
         x = int(result['x'])
         y = int(result['y'])
@@ -63,12 +114,23 @@ def click_next_button(cdp):
     else:
         print("  ERROR: Could not locate Next button")
         # Dump some info for debugging
-        debug = cdp.evaluate("Array.from(document.querySelectorAll('button')).map(b=>({text:b.textContent.trim(), count:b.childElementCount})).slice(0,5)")
+        debug_raw = cdp.evaluate("Array.from(document.querySelectorAll('button')).map(b=>({text:b.textContent.trim(), disabled:b.disabled})).slice(0,5)")
+        debug = None
+        if debug_raw and isinstance(debug_raw, dict):
+            if 'result' in debug_raw:
+                debug = debug_raw['result'].get('value')
+            else:
+                debug = debug_raw
+        else:
+            debug = debug_raw
         print(f"  Debug: first 5 buttons: {debug}")
         return False
 
 def main():
-    cdp = CDPClient()
+    cdp = get_or_create_cdp_client()
+    if not cdp:
+        print("ERROR: Failed to create CDP client (could not launch browser)")
+        return
     print("=== Google Signup Automation Demo ===")
     username = random_username()
     password = "Test1234!"
@@ -93,18 +155,36 @@ def main():
     # Step 1: Navigate to signup
     print("Navigating to Google signup...")
     cdp.navigate("https://accounts.google.com/signup")
-    time.sleep(3)
+    time.sleep(6)  # Increased wait for page to fully load
     screenshot(1)
 
     # Step 2: Name
+    print("Waiting for name inputs...")
+    if not wait_for_element(cdp, "input[name='firstName']", timeout=15):
+        print("ERROR: firstName input not found")
+        # Debug: dump page info
+        html_raw = cdp.evaluate("document.documentElement.outerHTML")
+        html = None
+        if html_raw and isinstance(html_raw, dict):
+            html = html_raw.get('result', {}).get('value', '')
+        if html:
+            with open("screenshots/google_demo/page.html", "w", encoding="utf-8") as f:
+                f.write(html)
+            print("Page HTML saved to screenshots/google_demo/page.html (snippet:)")
+            print(html[:2000])
+        else:
+            print("Could not retrieve page HTML")
+        return
     print("Filling name...")
-    cdp.type_in_element("input[name='firstName']", first)
-    cdp.type_in_element("input[name='lastName']", last)
+    if not cdp.type_in_element("input[name='firstName']", first):
+        print("WARNING: Could not fill firstName")
+    if not cdp.type_in_element("input[name='lastName']", last):
+        print("WARNING: Could not fill lastName")
+    time.sleep(2)  # Wait for any dynamic changes
+
     if not click_next_button(cdp):
         print("ERROR: Could not click Next on name page")
         return
-    time.sleep(3)
-    screenshot(2)
 
     # Step 3: Birthday & Gender
     print("Filling birthday and gender...")
