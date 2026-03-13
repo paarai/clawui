@@ -146,12 +146,15 @@ ensure_gui_environment()
 
 
 class CDPClient:
-    """Simple CDP client using HTTP + WebSocket-free approach (via /json endpoints)."""
+    """CDP client with persistent WebSocket connection for fast command execution."""
 
     def __init__(self, host: str = "127.0.0.1", port: int = 9222):
         self.host = host
         self.port = port
         self._ws = None
+        self._ws_url = None
+        self._ws_target_id = None
+        self._msg_id = 0
 
     def _http_get(self, path: str) -> Any:
         """Make HTTP GET to CDP endpoint."""
@@ -235,18 +238,16 @@ class CDPClient:
 
     def navigate(self, url: str, target_id: Optional[str] = None) -> bool:
         """Navigate to URL via CDP."""
-        ws_url = self._get_ws_url(target_id)
-        if not ws_url:
+        if not self._ensure_ws(target_id):
             return False
-        result = self._send_cdp_command(ws_url, "Page.navigate", {"url": url})
+        result = self._send_cdp_command(self._ws_url, "Page.navigate", {"url": url})
         return result is not None
 
     def evaluate(self, expression: str, target_id: Optional[str] = None) -> Any:
         """Evaluate JavaScript in page."""
-        ws_url = self._get_ws_url(target_id)
-        if not ws_url:
+        if not self._ensure_ws(target_id):
             return None
-        return self._send_cdp_command(ws_url, "Runtime.evaluate", {"expression": expression})
+        return self._send_cdp_command(self._ws_url, "Runtime.evaluate", {"expression": expression})
 
     def click_element(self, selector: str) -> bool:
         """Click element by CSS selector."""
@@ -285,27 +286,98 @@ class CDPClient:
             return result.get("result", {}).get("value", "")
         return ""
 
-    def _send_cdp_command(self, ws_url: str, method: str, params: dict = None) -> Any:
-        """Send CDP command via WebSocket (minimal implementation)."""
+    def _ensure_ws(self, target_id: str = None) -> bool:
+        """Ensure a persistent WebSocket connection to the target tab.
+        
+        Reuses existing connection if target hasn't changed. Auto-reconnects on failure.
+        """
+        ws_url = self._get_ws_url(target_id)
+        if not ws_url:
+            return False
+        
+        # Reuse if same target and connection alive
+        if self._ws and self._ws_url == ws_url:
+            try:
+                self._ws.ping()
+                return True
+            except Exception:
+                self._ws = None
+                self._ws_url = None
+        
+        # Close old connection if target changed
+        if self._ws:
+            try:
+                self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+            self._ws_url = None
+        
+        # Open new persistent connection
         try:
             import websocket
-            ws = websocket.create_connection(ws_url, timeout=10)
-            msg = {"id": 1, "method": method, "params": params or {}}
-            ws.send(json.dumps(msg))
-            response = json.loads(ws.recv())
-            ws.close()
-            return response.get("result")
+            self._ws = websocket.create_connection(ws_url, timeout=10)
+            self._ws_url = ws_url
+            return True
+        except ImportError:
+            return False
+        except Exception as e:
+            print(f"[CDP] WebSocket connect failed: {e}", file=sys.stderr)
+            return False
+
+    def _send_cdp_command(self, ws_url: str, method: str, params: dict = None) -> Any:
+        """Send CDP command via persistent WebSocket (falls back to one-shot if needed)."""
+        # Try persistent connection first
+        if self._ws and self._ws_url == ws_url:
+            try:
+                self._msg_id += 1
+                msg = {"id": self._msg_id, "method": method, "params": params or {}}
+                self._ws.send(json.dumps(msg))
+                # Read responses until we get our reply (skip events)
+                deadline = time.time() + 15
+                while time.time() < deadline:
+                    raw = self._ws.recv()
+                    response = json.loads(raw)
+                    if response.get("id") == self._msg_id:
+                        return response.get("result")
+                    # Skip CDP events (no "id" field)
+                return None
+            except Exception:
+                # Connection died, clean up and fall through to reconnect
+                try:
+                    self._ws.close()
+                except Exception:
+                    pass
+                self._ws = None
+                self._ws_url = None
+
+        # Try to establish/re-establish persistent connection
+        try:
+            import websocket
+            self._ws = websocket.create_connection(ws_url, timeout=10)
+            self._ws_url = ws_url
+            self._msg_id += 1
+            msg = {"id": self._msg_id, "method": method, "params": params or {}}
+            self._ws.send(json.dumps(msg))
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                raw = self._ws.recv()
+                response = json.loads(raw)
+                if response.get("id") == self._msg_id:
+                    return response.get("result")
+            return None
         except ImportError:
             return self._send_via_websocat(ws_url, method, params)
         except Exception as e:
+            self._ws = None
+            self._ws_url = None
             return None
 
     def _raw_cdp(self, method: str, params: dict = None) -> Any:
-        """Send raw CDP command to active tab."""
-        ws_url = self._get_ws_url()
-        if not ws_url:
+        """Send raw CDP command to active tab using persistent connection."""
+        if not self._ensure_ws():
             return None
-        return self._send_cdp_command(ws_url, method, params or {})
+        return self._send_cdp_command(self._ws_url, method, params or {})
 
     def dispatch_mouse(self, x: int, y: int, click_type: str = "click"):
         """Simulate real mouse click at viewport coordinates."""
