@@ -28,20 +28,13 @@ def test_x11():
 
 def test_cdp():
     log("=== CDP Test ===")
-    # Check if Chromium already running with CDP
-    client = CDPClient()
-    if not client.is_available():
-        log("Chromium CDP not available, launching...")
-        subprocess.Popen(['snap', 'run', 'chromium',
-            '--remote-debugging-port=9222', '--remote-allow-origins=*',
-            '--no-first-run', 'about:blank'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(5)
-        if not client.is_available():
-            log("Failed to launch Chromium with CDP")
-            return False
+    # Use the robust client that auto-launches with headless fallback
+    client = get_or_create_cdp_client()
+    if not client:
+        log("Failed to get or create CDP client")
+        return False
 
-    # Navigate
+    # Navigate to a simple site
     ok = client.navigate("https://github.com")
     time.sleep(3)
     title = client.get_page_title()

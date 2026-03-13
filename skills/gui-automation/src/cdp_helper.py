@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import subprocess
+import sys
 import time
 import socket
 import http.client
@@ -98,13 +99,34 @@ def inherit_gui_session_env():
         pass
 
 
+def _running_interactively() -> bool:
+    """Check if we appear to be running in an interactive session.
+    Cron jobs and systemd services usually have no TTY.
+    """
+    # Check for common TTY indicators
+    if sys.stdin.isatty():
+        return True
+    # SSH sessions often set SSH_TTY
+    if os.environ.get('SSH_TTY'):
+        return True
+    # If TERM is set but not 'dumb' and we have a controlling TTY? Not foolproof.
+    # Simpler: if DISPLAY/WAYLAND_DISPLAY already set, assume user intended GUI
+    if os.environ.get('DISPLAY') or os.environ.get('WAYLAND_DISPLAY'):
+        return True
+    return False
+
 def ensure_gui_environment():
     """
     Ensure DISPLAY, WAYLAND_DISPLAY, and XAUTHORITY are set for GUI operations.
     Tries to detect the active graphical session and configure environment.
+    Will skip auto-detection if running non-interactively (e.g., cron).
     """
     # If already have these, nothing to do
     if os.environ.get('DISPLAY') and os.environ.get('XAUTHORITY'):
+        return
+
+    # Skip auto-detection in non-interactive sessions (e.g., cron)
+    if not _running_interactively():
         return
 
     # First, try to inherit from a running GUI session process
