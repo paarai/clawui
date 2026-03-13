@@ -19,16 +19,98 @@ DEFAULT_USER_DATA_DIR = os.path.join(
 )
 
 
+def inherit_gui_session_env():
+    """
+    Try to inherit GUI environment variables from the user's graphical session.
+    Looks for processes like gnome-session, Xorg, or wayland and reads their /proc/PID/environ.
+    """
+    if os.environ.get('DISPLAY') and os.environ.get('XAUTHORITY'):
+        # Already have what we need
+        return
+
+    # Find candidate processes that are likely running in the GUI session
+    candidates = []
+    try:
+        # Find gnome-session processes owned by the current user
+        result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+        for line in result.stdout.splitlines():
+            if any(proc in line for proc in ['gnome-session', 'Xorg', 'wayland', 'gnome-shell']):
+                parts = line.split()
+                if len(parts) >= 2:
+                    uid = parts[1]
+                    if uid == str(os.getuid()):  # Owned by current user
+                        pid = parts[1] if parts[1].isdigit() else None
+                        if pid:
+                            candidates.append(pid)
+    except Exception:
+        pass
+
+    # Also try loginctl to find the graphical session
+    try:
+        sessions = subprocess.run(['loginctl', 'list-sessions', '--no-legend'], capture_output=True, text=True)
+        for line in sessions.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[2] == 'user':
+                sid = parts[0]
+                info = subprocess.run(['loginctl', 'show-session', sid, '-p', 'Display', '-p', 'Type', '-p', 'Leader'], capture_output=True, text=True)
+                leader = None
+                display = None
+                for l in info.stdout.splitlines():
+                    if l.startswith('Leader='):
+                        leader = l.split('=')[1]
+                    elif l.startswith('Display='):
+                        display = l.split('=')[1]
+                if leader and leader.isdigit() and str(os.getuid()) == subprocess.run(['ps', '-o', 'uid=', '-p', leader], capture_output=True, text=True).stdout.strip():
+                    candidates.append(leader)
+                    if display and not os.environ.get('DISPLAY'):
+                        os.environ['DISPLAY'] = display
+                        print(f'[CDP] Inherited DISPLAY={display} from session leader {leader}')
+    except Exception:
+        pass
+
+    # Read environment from candidate processes
+    for pid in candidates:
+        try:
+            environ_path = f'/proc/{pid}/environ'
+            if not os.path.exists(environ_path):
+                continue
+            with open(environ_path, 'rb') as f:
+                data = f.read().split(b'\x00')
+                env = {}
+                for item in data:
+                    if b'=' in item:
+                        k, v = item.split(b'=', 1)
+                        env[k.decode('utf-8', 'ignore')] = v.decode('utf-8', 'ignore')
+                
+                # Apply relevant variables
+                for key in ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', ' WAYLAND_SOCKET']:
+                    if key in env and not os.environ.get(key):
+                        os.environ[key] = env[key]
+                        print(f'[CDP] Inherited {key}={env[key]} from PID {pid}')
+        except Exception:
+            continue
+
+    # Also try to set DBUS_SESSION_BUS_ADDRESS from the session
+    try:
+        dbus_addr = subprocess.run(['dbus-send', '--session', '--print-reply', '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus.GetId'], capture_output=True, text=True, timeout=2)
+        # Not reliable, skip
+    except Exception:
+        pass
+
+
 def ensure_gui_environment():
     """
     Ensure DISPLAY, WAYLAND_DISPLAY, and XAUTHORITY are set for GUI operations.
     Tries to detect the active graphical session and configure environment.
     """
     # If already have these, nothing to do
-    if os.environ.get('DISPLAY') or (os.environ.get('WAYLAND_DISPLAY') and os.environ.get('XAUTHORITY')):
+    if os.environ.get('DISPLAY') and os.environ.get('XAUTHORITY'):
         return
 
-    # Try to find DISPLAY from X11 sockets
+    # First, try to inherit from a running GUI session process
+    inherit_gui_session_env()
+
+    # If we still don't have DISPLAY, try fallback heuristics
     if not os.environ.get('DISPLAY'):
         for i in [0, 1]:
             if os.path.exists(f'/tmp/.X11-unix/X{i}'):
@@ -36,15 +118,12 @@ def ensure_gui_environment():
                 print(f'[CDP] Auto-detected DISPLAY={":%d" % i}')
                 break
 
-    # Try to find WAYLAND_DISPLAY
     if not os.environ.get('WAYLAND_DISPLAY'):
-        # Common Wayland socket in user runtime
-        wayland_sock = '/run/user/1000/wayland-0'
-        if os.path.exists(wayland_sock) or os.path.exists(wayland_sock.replace('1000', str(os.getuid()))):
+        wayland_sock = f'/run/user/{os.getuid()}/wayland-0'
+        if os.path.exists(wayland_sock):
             os.environ['WAYLAND_DISPLAY'] = 'wayland-0'
             print('[CDP] Auto-detected WAYLAND_DISPLAY=wayland-0')
 
-    # Try to find XAUTHORITY
     if not os.environ.get('XAUTHORITY'):
         candidates = [
             os.path.expanduser('~/.Xauthority'),
@@ -56,23 +135,6 @@ def ensure_gui_environment():
                 os.environ['XAUTHORITY'] = path
                 print(f'[CDP] Auto-detected XAUTHORITY={path}')
                 break
-
-    # If we have DISPLAY but no XAUTHORITY, try to generate one via xauth if available
-    if os.environ.get('DISPLAY') and not os.environ.get('XAUTHORITY'):
-        try:
-            # Use the display we set to generate a new authority file
-            import getpass
-            home = os.path.expanduser('~')
-            xauth_path = os.path.join(home, '.Xauthority')
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(xauth_path), exist_ok=True)
-            # Generate using xauth
-            subprocess.run(['xauth', 'generate', os.environ['DISPLAY'], '.', 'trusted'], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if os.path.exists(xauth_path):
-                os.environ['XAUTHORITY'] = xauth_path
-                print(f'[CDP] Generated new XAUTHORITY at {xauth_path}')
-        except Exception:
-            pass
 
 # Call it at module import to configure environment
 ensure_gui_environment()
