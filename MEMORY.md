@@ -144,6 +144,7 @@
    - `consecutive_errors` 计数逻辑错误（重置位置错误导致从不触发）
    - `result` 变量名冲突（后端响应与工具结果混淆）
 4. **持续集成验证**: 所有自动 cron 任务通过，GitHub Issues 为零，工作区保持干净。
+5. **GUI 环境自动继承**: 增强 `cdp_helper.py`，新增 `inherit_gui_session_env()` 函数，可从用户图形会话进程（gnome-session/Xorg）读取 `DISPLAY`、`WAYLAND_DISPLAY`、`XAUTHORITY`，使自动化脚本能在非交互式环境中正确连接到用户的图形会话。这解决了浏览器自动化无法打开窗口的问题。
 
 ## 待办
 - **测试模板系统**: 手动运行 `learn_template.py wechat_devtools` 记录"新建项目"等按钮坐标, 然后用 `click_template` 实现完整自动化
