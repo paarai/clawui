@@ -114,6 +114,8 @@ def create_tools():
         {"name": "do_action", "description": "Execute AT-SPI action on element found by role+name", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}, "action": {"type": "string", "default": "click"}}}},
         {"name": "set_text", "description": "Set text in editable field (by role+name)", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}, "text": {"type": "string"}}, "required": ["text"]}},
         {"name": "wait", "description": "Wait seconds", "input_schema": {"type": "object", "properties": {"seconds": {"type": "number"}}, "required": ["seconds"]}},
+        {"name": "wait_for_element", "description": "Wait for a UI element to appear (AT-SPI). Polls until found or timeout.", "input_schema": {"type": "object", "properties": {"role": {"type": "string", "description": "AT-SPI role (e.g., 'push button', 'text')"}, "name": {"type": "string", "description": "Exact name match"}, "name_contains": {"type": "string", "description": "Partial name match"}, "timeout": {"type": "number", "default": 30, "description": "Timeout in seconds"}, "poll_interval": {"type": "number", "default": 1, "description": "Poll interval in seconds"}}}},
+        {"name": "wait_for_text", "description": "Wait for specific text to appear on screen using OCR. Polls with screenshots until found or timeout.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to wait for (case-insensitive partial match)"}, "timeout": {"type": "number", "default": 30, "description": "Timeout in seconds"}, "poll_interval": {"type": "number", "default": 2, "description": "Poll interval in seconds (OCR is slower)"}}, "required": ["text"]}},
         {"name": "vision_find_element", "description": "Find UI element by description using vision AI (experimental)", "input_schema": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]}},
         # Application launch tools
         {"name": "launch_app", "description": "Launch an application by command (e.g., 'firefox', 'gedit', or full path). Returns process info.", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string", "description": "Command to execute (with optional args)"}, "args": {"type": "array", "items": {"type": "string"}, "description": "Optional argument list"}}, "required": ["cmd"]}},
@@ -280,6 +282,47 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
         elif name == "wait":
             time.sleep(input_data["seconds"])
             return {"type": "text", "text": f"Waited {input_data['seconds']}s"}
+
+        elif name == "wait_for_element":
+            role = input_data.get("role")
+            el_name = input_data.get("name") or input_data.get("name_contains")
+            timeout = input_data.get("timeout", 30)
+            poll_interval = input_data.get("poll_interval", 1)
+            if not role and not el_name:
+                return {"type": "text", "text": "Need at least one of: role, name, name_contains"}
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    results = find_elements(role=role, name=el_name)
+                    if results:
+                        first = results[0]
+                        return {"type": "text", "text": f"Element found after {time.time()-start:.1f}s: role={first.role}, name={first.name}, position=({first.x},{first.y})"}
+                except Exception:
+                    pass
+                time.sleep(poll_interval)
+            return {"type": "text", "text": f"Timeout after {timeout}s: element not found (role={role}, name={el_name})"}
+
+        elif name == "wait_for_text":
+            target_text = input_data.get("text", "")
+            timeout = input_data.get("timeout", 30)
+            poll_interval = input_data.get("poll_interval", 2)
+            if not target_text:
+                return {"type": "text", "text": "Missing 'text' parameter"}
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    from .ocr_tool import ocr_find_text
+                    img_b64 = take_screenshot()
+                    if img_b64:
+                        matches = ocr_find_text(img_b64, target_text)
+                        if matches:
+                            best = matches[0]
+                            cx, cy = best['center']
+                            return {"type": "text", "text": f"Text '{target_text}' found after {time.time()-start:.1f}s at ({cx},{cy}), score={best.get('score', 'N/A')}"}
+                except Exception:
+                    pass
+                time.sleep(poll_interval)
+            return {"type": "text", "text": f"Timeout after {timeout}s: text '{target_text}' not found on screen"}
 
         # Enhanced window management tools (A)
         elif name == "list_windows":
