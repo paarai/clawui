@@ -150,6 +150,9 @@ def create_tools():
         {"name": "set_text", "description": "Set text in editable field (by role+name)", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}, "text": {"type": "string"}}, "required": ["text"]}},
         {"name": "wait", "description": "Wait seconds", "input_schema": {"type": "object", "properties": {"seconds": {"type": "number"}}, "required": ["seconds"]}},
         {"name": "vision_find_element", "description": "Find UI element by description using vision AI (experimental)", "input_schema": {"type": "object", "properties": {"description": {"type": "string"}}, "required": ["description"]}},
+        # High-level element interaction (find + act in one step)
+        {"name": "click_element", "description": "Find a UI element by role/name and click its center. Combines find_element + click in one step.", "input_schema": {"type": "object", "properties": {"role": {"type": "string", "description": "Element role (e.g. 'push button', 'menu item')"}, "name": {"type": "string", "description": "Exact element name"}, "name_contains": {"type": "string", "description": "Partial name match (case-insensitive)"}, "button": {"type": "string", "enum": ["left", "right", "double"], "default": "left"}}}},
+        {"name": "get_element_text", "description": "Get the text/value of a UI element found by role/name. Returns name, value, and states.", "input_schema": {"type": "object", "properties": {"role": {"type": "string"}, "name": {"type": "string"}, "name_contains": {"type": "string"}}}},
         # Application launch tools
         {"name": "launch_app", "description": "Launch an application by command (e.g., 'firefox', 'gedit', or full path). Returns process info.", "input_schema": {"type": "object", "properties": {"cmd": {"type": "string", "description": "Command to execute (with optional args)"}, "args": {"type": "array", "items": {"type": "string"}, "description": "Optional argument list"}}, "required": ["cmd"]}},
         {"name": "launch_wechat_devtools", "description": "Launch WeChat DevTools (snap or wine). Returns when window appears.", "input_schema": {"type": "object", "properties": {"use_wine": {"type": "boolean", "default": False, "description": "Use Wine backend (if Windows .exe provided)"}}}},
@@ -246,6 +249,58 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                         delay *= 2
                         continue
                     return {"type": "text", "text": f"Find element error after {max_attempts} attempts: {e}"}
+
+        elif name == "click_element":
+            max_attempts = int(os.getenv('CLAWUI_RETRY_MAX', '3'))
+            delay = float(os.getenv('CLAWUI_RETRY_DELAY', '0.5'))
+            role = input_data.get("role")
+            el_name = input_data.get("name")
+            name_contains = input_data.get("name_contains")
+            button = input_data.get("button", "left")
+            for attempt in range(max_attempts):
+                try:
+                    elements = find_elements(role=role, name=el_name)
+                    if name_contains:
+                        elements = [e for e in elements if name_contains.lower() in (e.name if hasattr(e, 'name') else str(e)).lower()]
+                    if elements:
+                        el = elements[0]
+                        cx, cy = el.center() if hasattr(el, 'center') else (el.x + el.width // 2, el.y + el.height // 2)
+                        if button == "double":
+                            double_click(cx, cy)
+                        elif button == "right":
+                            right_click(cx, cy)
+                        else:
+                            click(cx, cy)
+                        return {"type": "text", "text": f"Clicked '{el.name}' ({el.role}) at ({cx}, {cy}) [{button}]"}
+                    if attempt < max_attempts - 1:
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    return {"type": "text", "text": f"click_element: element not found (role={role}, name={el_name}, name_contains={name_contains})"}
+                except Exception as e:
+                    if attempt < max_attempts - 1:
+                        time.sleep(delay)
+                        delay *= 2
+                        continue
+                    return {"type": "text", "text": f"click_element error: {e}"}
+
+        elif name == "get_element_text":
+            role = input_data.get("role")
+            el_name = input_data.get("name")
+            name_contains = input_data.get("name_contains")
+            elements = find_elements(role=role, name=el_name)
+            if name_contains:
+                elements = [e for e in elements if name_contains.lower() in (e.name if hasattr(e, 'name') else str(e)).lower()]
+            if not elements:
+                return {"type": "text", "text": "(no elements found)"}
+            results = []
+            for el in elements[:10]:
+                info = {"name": el.name, "role": el.role, "states": el.states if hasattr(el, 'states') else []}
+                if hasattr(el, 'value') and el.value is not None:
+                    info["value"] = el.value
+                results.append(info)
+            import json
+            return {"type": "text", "text": json.dumps(results, ensure_ascii=False, indent=2)}
 
         elif name == "click":
             click(input_data["x"], input_data["y"])
