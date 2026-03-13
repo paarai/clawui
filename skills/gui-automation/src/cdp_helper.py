@@ -372,33 +372,15 @@ class CDPClient:
 _launched_browser_processes = {}
 
 
-def _xauthority_valid(path: Optional[str]) -> bool:
-    """Check if Xauthority file exists and has non-trivial size."""
-    if not path:
-        return False
-    try:
-        return os.path.getsize(path) > 10
-    except:
-        return False
-
 def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> Optional[subprocess.Popen]:
     """Launch Chromium/Chrome with remote debugging enabled.
 
-    Tries multiple detection strategies in order:
-    1. Common binary names in PATH (chromium-browser, chromium, google-chrome, google-chrome-stable, chrome)
-    2. Snap installations (snap run chromium)
-    3. Flatpak installations (flatpak run org.chromium.Chromium)
-    4. Headless variants (for environments without DISPLAY or with invalid XAUTHORITY)
-    5. Try with --no-sandbox for restricted environments (snap)
+    Uses headless mode only to avoid X server dependencies.
 
     Returns the Popen object if successful, None otherwise.
     """
     # Ensure the persistent profile directory exists
     os.makedirs(DEFAULT_USER_DATA_DIR, exist_ok=True)
-
-    # Determine if we can use headful mode (requires valid XAUTHORITY)
-    xauth_valid = _xauthority_valid(os.environ.get('XAUTHORITY'))
-    has_display = bool(os.environ.get('DISPLAY'))
 
     # Base arguments common to all launches
     base_args = [
@@ -410,71 +392,47 @@ def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> Opti
         url
     ]
 
-    # Candidate commands grouped by strategy
-    candidates = []
-
-    # If we have a valid Xauthority and DISPLAY, try headful first
-    if has_display and xauth_valid:
-        candidates += [
-            ['chromium-browser'] + base_args,
-            ['chromium'] + base_args,
-            ['google-chrome'] + base_args,
-            ['google-chrome-stable'] + base_args,
-            ['chrome'] + base_args,
-            ['snap', 'run', 'chromium'] + base_args,
-            ['flatpak', 'run', 'org.chromium.Chromium'] + base_args,
-        ]
-
-    # Always try headless (works without X)
-    headless_base = ['--headless=new']
-    candidates += [
-        ['chromium-browser'] + headless_base + base_args,
-        ['chromium'] + headless_base + base_args,
-        ['google-chrome'] + headless_base + base_args,
-        ['google-chrome-stable'] + headless_base + base_args,
-        ['chrome'] + headless_base + base_args,
-        ['snap', 'run', 'chromium'] + headless_base + base_args,
-        # With --no-sandbox (for snap confinement issues)
-        ['snap', 'run', 'chromium', '--no-sandbox'] + headless_base + base_args,
-        ['chromium-browser', '--no-sandbox'] + headless_base + base_args,
+    # Headless-only candidates (no X dependency)
+    candidates = [
+        ['chromium-browser', '--headless=new'] + base_args,
+        ['chromium', '--headless=new'] + base_args,
+        ['google-chrome', '--headless=new'] + base_args,
+        ['google-chrome-stable', '--headless=new'] + base_args,
+        ['chrome', '--headless=new'] + base_args,
+        ['snap', 'run', 'chromium', '--headless=new'] + base_args,
+        # Fallback with --no-sandbox for snap confinement
+        ['snap', 'run', 'chromium', '--no-sandbox', '--headless=new'] + base_args,
+        ['chromium-browser', '--no-sandbox', '--headless=new'] + base_args,
     ]
-
-    # Try fallback: non-headless with --no-sandbox (last resort)
-    if not xauth_valid:
-        candidates += [
-            ['snap', 'run', 'chromium', '--no-sandbox'] + base_args,
-            ['chromium-browser', '--no-sandbox'] + base_args,
-        ]
 
     for cmd in candidates:
         try:
-            # Start browser in its own process group to avoid being killed when parent exits
             proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True  # Create new session, detach from parent
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True
             )
-            # Wait a bit for browser to start and open CDP endpoint
             time.sleep(3)
             if _is_port_listening(port):
                 _launched_browser_processes[port] = proc
                 return proc
-            else:
-                # Port not open yet, wait a bit more
-                time.sleep(2)
-                if _is_port_listening(port):
-                    _launched_browser_processes[port] = proc
-                    return proc
-                # Not ready, terminate and try next
-                try:
-                    proc.terminate()
-                    proc.wait(timeout=2)
-                except:
-                    pass
+            time.sleep(2)
+            if _is_port_listening(port):
+                _launched_browser_processes[port] = proc
+                return proc
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except:
+                pass
+            _, stderr = proc.communicate()
+            if stderr:
+                print(f"[DEBUG] Command '{' '.join(cmd)}' failed: {stderr.decode('utf-8', 'ignore')[:200]}", file=sys.stderr)
         except FileNotFoundError:
             continue
-        except Exception:
+        except Exception as e:
+            print(f"[DEBUG] Exception launching '{' '.join(cmd)}': {e}", file=sys.stderr)
             continue
 
     return None

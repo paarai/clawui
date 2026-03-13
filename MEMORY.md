@@ -119,9 +119,13 @@
 - 新增验证脚本: `scripts/validate_python_files.py`
 
 ## 状态
-- **工作区**: 干净（所有更改已提交推送）。
-- **未提交变更**: 无。
-- **新增目录**: `scripts/` (验证工具), `tools/`, `templates/` (规划中)
+- **工作区**: 有未提交的更改需要审查。
+- **未提交变更**: 
+  - Modified: `ClawUI` (submodule update pending commit)
+  - Modified: `MEMORY.md` (curated memory updates)
+  - Modified: `memory/2026-03-13.md` (heartbeat logs)
+  - Untracked: `test_cdp_launch.py`, `test_cdp_simple.py`, `test_fix.py`, `test_inherit.py` (CDP environment inheritance diagnostics)
+- **新增目录**: `scripts/` (验证工具), `tools/`, `templates/` (已实现)
 
 ## 近期行动摘要 (2026-03-12)
 1. **代码审核** - 发现并修复 cdp_click_at、marionette _disconnect、test_vision_tool.py 损坏问题
@@ -164,6 +168,7 @@
 - **环境要求**: 自动化需在图形会话运行 (DISPLAY/WAYLAND_DISPLAY/DBUS_SESSION_BUS_ADDRESS)
 - **依赖**: OCR 功能需要手动安装 rapidocr-onnxruntime (推荐) 或 tesseract-ocr + tesseract-ocr-chi-sim
 - **系统健康检查**: 新增 `tools/check_system_health.py`，验证所有自动化后端（AT-SPI, X11, CDP, Marionette, Vision）的可用性
+- **系统健康检查**: 新增 `tools/check_system_health.py`，验证所有自动化后端（AT-SPI, X11, CDP, Marionette, Vision）的可用性
 
 ## 编程教训 (持续记录)
 - **避免变量遮蔽**: 函数内部避免使用与外部变量同名的参数/变量，会导致逻辑错误（如 `consecutive_errors` 被重置）
@@ -171,3 +176,5 @@
 - **变量作用域**: 循环内初始化关键状态变量会抵消其累积效果 — 确保初始化在正确的层级
 - **CDP 点击策略**: 复杂网页（如 Google）推荐使用 `dispatch_mouse` 坐标点击而非 `element.click()`，更可靠且不易被检测
 - **Git 子模块工作流**: 修改子模块内部 → 在子模块内提交 → 拉取远程并变基 → 推送子模块 → 更新父仓库 gitlink → 推送父仓库，避免 diverged 分支冲突
+- **GUI 环境继承**: 从用户图形会话进程读取环境变量（DISPLAY/WAYLAND_DISPLAY/XAUTHORITY）以解决非交互式环境中的 GUI 连接问题
+- **工具注册去重**: 定期审计工具注册列表，避免重复注册导致工具数量统计错误和代码冗余
