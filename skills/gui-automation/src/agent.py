@@ -16,6 +16,7 @@ from .actions import (
 )
 from .backends import get_backend
 from .recorder import Recorder, Player, start_recording, stop_recording, record_action, play_recording
+from .github_integration import create_github_repo
 
 # Global recorder - use module-level functions
 # CDP support (lazy import)
@@ -151,6 +152,7 @@ def create_tools():
         {"name": "click_template", "description": "Click on a UI element based on a learned template. Input: app (template name), element (key in template), optional: offset_x/y (pixel offset)", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}, "element": {"type": "string"}}, "optional": ["offset_x", "offset_y"]}},
         # High-level task automation (B)
         {"name": "plan_and_execute", "description": "Given a natural language task, autonomously break it down into steps and execute using available tools. Returns final result and summary.", "input_schema": {"type": "object", "properties": {"task": {"type": "string", "description": "Natural language description of the task to accomplish"}}, "required": ["task"]}},
+        {"name": "github_create_repo", "description": "Create a GitHub repository. Tries using GITHUB_TOKEN, then gh CLI, then browser automation (requires logged-in session).", "input_schema": {"type": "object", "properties": {"repo_name": {"type": "string", "description": "Repository name (e.g., 'my-repo')"}, "repo_desc": {"type": "string", "description": "Description (optional)"}}, "required": ["repo_name"]}},
     ]
 
 
@@ -1052,6 +1054,20 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 return {"type": "text", "text": "No recordings found"}
             lines = [f"- {r['name']}: {r['actions']} actions ({r['created']})" for r in recs]
             return {"type": "text", "text": "\n".join(lines)}
+
+        elif name == "github_create_repo":
+            repo_name = input_data.get("repo_name")
+            repo_desc = input_data.get("repo_desc", "")
+            if not repo_name:
+                return {"type": "text", "text": "Missing 'repo_name' parameter"}
+            try:
+                result = create_github_repo(repo_name, repo_desc)
+                if result.get("success"):
+                    return {"type": "text", "text": f"✅ GitHub repository created: {result.get('repo_url')} (via {result.get('method')})"}
+                else:
+                    return {"type": "text", "text": f"❌ Failed to create GitHub repository: {result.get('error')} (method: {result.get('method')})"}
+            except Exception as e:
+                return {"type": "text", "text": f"Error during GitHub repo creation: {e}"}
 
         else:
             return {"type": "text", "text": f"Unknown tool: {name}"}
