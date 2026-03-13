@@ -146,6 +146,7 @@ def create_tools():
         {"name": "list_recordings", "description": "List available recorded scripts", "input_schema": {"type": "object", "properties": {}}},
         # OCR-based text detection (fast, CPU-friendly)
         {"name": "find_text", "description": "Find text on screen using OCR (RapidOCR/Tesseract). Returns list of occurrences with center coordinates and scores. Supports partial match.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to find (case-insensitive partial match)"}}, "required": ["text"]}},
+        {"name": "wait_for_text", "description": "Wait until specified text appears on screen using OCR polling. Returns first match coordinates and elapsed time.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to wait for (case-insensitive partial match)"}, "timeout": {"type": "number", "default": 30, "description": "Maximum seconds to wait"}, "poll_interval": {"type": "number", "default": 0.5, "description": "Seconds between OCR polls"}}, "required": ["text"]}},
         # Template-based clicking (fallback when AT-SPI/vision not available)
         {"name": "click_template", "description": "Click on a UI element based on a learned template. Input: app (template name), element (key in template), optional: offset_x/y (pixel offset)", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}, "element": {"type": "string"}}, "optional": ["offset_x", "offset_y"]}},
         # High-level task automation (B)
@@ -744,6 +745,29 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 return {"type": "dict", "matches": matches, "count": len(matches), "text": f"Found {len(matches)} occurrence(s) of '{input_data['text']}'"}
             except Exception as e:
                 return {"type": "text", "text": f"OCR error: {e}"}
+
+        elif name == "wait_for_text":
+            text = input_data.get("text")
+            if not text:
+                return {"type": "text", "text": "Missing 'text' parameter"}
+            timeout = input_data.get("timeout", 30)
+            poll_interval = input_data.get("poll_interval", 0.5)
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    img_data = take_screenshot()
+                    if not img_data:
+                        time.sleep(poll_interval)
+                        continue
+                    from .ocr_tool import ocr_find_text
+                    matches = ocr_find_text(img_data, text)
+                    if matches:
+                        elapsed = time.time() - start
+                        return {"type": "dict", "matches": matches, "count": len(matches), "elapsed": round(elapsed, 2), "text": f"Text appeared after {elapsed:.1f}s: {len(matches)} occurrence(s)"}
+                except Exception:
+                    pass
+                time.sleep(poll_interval)
+            return {"type": "text", "text": f"Timeout: text '{text}' not found after {timeout}s"}
 
         elif name == "click_template":
             app_name = input_data.get("app")
