@@ -427,8 +427,25 @@ _launched_browser_processes = {}
 
 
 def _is_snap_launcher(launcher: List[str]) -> bool:
-    """Check if a launcher command uses snap."""
-    return 'snap' in launcher
+    """Check if a launcher command uses snap (including wrapper scripts)."""
+    import shutil
+    if 'snap' in launcher:
+        return True
+    # Check if the binary is a script that delegates to /snap/
+    binary = launcher[0]
+    path = shutil.which(binary)
+    if not path:
+        return False
+    real = os.path.realpath(path)
+    if '/snap/' in real:
+        return True
+    try:
+        with open(real, 'r') as f:
+            if '/snap/' in f.read(512):
+                return True
+    except (OSError, UnicodeDecodeError):
+        pass
+    return False
 
 
 def _profile_dirs_for_launcher(launcher: List[str], port: int) -> List[str]:
