@@ -31,30 +31,41 @@ def wait_for_navigation(cdp, timeout=10):
     return False
 
 def click_next_button(cdp):
-    """Click the 'Next' button using multiple strategies."""
-    # Try common Google selectors
-    selectors = [
-        "button[jsname='Cuz2Ue']",
-        "button[type='submit']",
-        "button[aria-label*='Next' i]",
-        "button[aria-label*='下一步' i]",
-        "button[data-id*='next']"
-    ]
-    for sel in selectors:
-        try:
-            if cdp.click_element(sel):
-                return True
-        except Exception:
-            pass
-    # JavaScript fallback: find button by text content
-    script = """
-    const btns = Array.from(document.querySelectorAll('button'));
-    const next = btns.find(b => /Next|继续|下一步|继续下一步/.test(b.textContent.trim()));
-    if (next) { next.click(); return true; }
-    return false;
+    """Click the 'Next' button using coordinate-based click for reliability."""
+    # Try to find Next button text/position via JS
+    find_script = """
+    (function() {
+      const btns = Array.from(document.querySelectorAll('button, [role="button"], a[href]'));
+      const next = btns.find(b => {
+        const txt = b.textContent.trim().toLowerCase();
+        return txt.includes('next') || txt.includes('继续') || txt.includes('下一步');
+      });
+      if (next) {
+        const rect = next.getBoundingClientRect();
+        return {
+          text: next.textContent.trim(),
+          x: rect.x + rect.width / 2,
+          y: rect.y + rect.height / 2,
+          width: rect.width,
+          height: rect.height
+        };
+      }
+      return null;
+    })()
     """
-    result = cdp.evaluate(script)
-    return result is True
+    result = cdp.evaluate(find_script)
+    if result and isinstance(result, dict) and 'x' in result:
+        x = int(result['x'])
+        y = int(result['y'])
+        print(f"  Found Next button: '{result.get('text')}' at ({x},{y}) size {result.get('width')}x{result.get('height')}")
+        cdp.dispatch_mouse(x, y)
+        return True
+    else:
+        print("  ERROR: Could not locate Next button")
+        # Dump some info for debugging
+        debug = cdp.evaluate("Array.from(document.querySelectorAll('button')).map(b=>({text:b.textContent.trim(), count:b.childElementCount})).slice(0,5)")
+        print(f"  Debug: first 5 buttons: {debug}")
+        return False
 
 def main():
     cdp = CDPClient()
