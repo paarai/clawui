@@ -231,6 +231,7 @@ def create_tools():
         {"name": "click_text", "description": "Find text on screen via OCR and click its center. Combines find_text + click in one step. Retries up to 3 times with increasing delay if text not found.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to find and click (case-insensitive partial match)"}, "button": {"type": "string", "enum": ["left", "right", "double"], "default": "left"}, "index": {"type": "integer", "default": 0, "description": "Which occurrence to click if multiple matches (0=first, -1=last)"}, "timeout": {"type": "number", "default": 5, "description": "Max seconds to retry finding the text"}}, "required": ["text"]}},
         {"name": "screen_inspect", "description": "Inspect screenshot content via OCR and return detected hints/errors with recommended next actions. Use this before critical clicks if UI seems unresponsive.", "input_schema": {"type": "object", "properties": {"keywords": {"type": "array", "items": {"type": "string"}, "description": "Optional keywords to detect, e.g. ['无 AppID','错误','失败']"}}}},
         {"name": "resolve_create_blockers", "description": "Auto-handle common create-page blockers using OCR hints. Handles: missing AppID -> click 测试号, ECONNRESET -> click 重试, then try click 创建.", "input_schema": {"type": "object", "properties": {}}},
+        {"name": "smart_step", "description": "Run one intelligent UI step: inspect screenshot, classify blockers, execute best action, then verify state change.", "input_schema": {"type": "object", "properties": {"goal": {"type": "string", "description": "Goal hint, e.g. 'create project' or 'dismiss error popup'"}, "dry_run": {"type": "boolean", "default": false}}}},
         # Template-based clicking (fallback when AT-SPI/vision not available)
         {"name": "click_template", "description": "Click on a UI element based on a learned template. Input: app (template name), element (key in template), optional: offset_x/y (pixel offset)", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}, "element": {"type": "string"}}, "optional": ["offset_x", "offset_y"]}},
         # High-level task automation (B)
@@ -1069,6 +1070,73 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 return {"type": "dict", "actions": actions, "text": f"resolve_create_blockers done: {len(actions)} action(s)"}
             except Exception as e:
                 return {"type": "text", "text": f"resolve_create_blockers error: {e}"}
+
+        elif name == "smart_step":
+            # Observe -> Decide -> Act -> Verify
+            goal = input_data.get("goal", "")
+            dry_run = bool(input_data.get("dry_run", False))
+
+            img_data = take_screenshot()
+            if not img_data:
+                return {"type": "text", "text": "smart_step: failed to take screenshot"}
+
+            try:
+                from .ocr_tool import ocr_extract_lines, ocr_find_text
+
+                def _full_text(data):
+                    lines = ocr_extract_lines(data, threshold=0.2)
+                    return "\n".join([str(x.get("text", "")) for x in lines])
+
+                before_text = _full_text(img_data)
+                plan = []
+
+                # Decide
+                if ("ECONNRESET" in before_text) or ("重试" in before_text and "下载基础库" in before_text):
+                    plan.append(("click_text", "重试"))
+                if ("无 AppID" in before_text) or ("无AppID" in before_text) or ("无 ApplID" in before_text):
+                    plan.append(("click_text", "测试号"))
+                if ("创建小程序" in before_text) or ("创建小游戏" in before_text) or ("创建" in before_text and "取消" in before_text):
+                    plan.append(("click_text", "创建"))
+
+                # Fallback generic plan
+                if not plan:
+                    if "关闭" in before_text:
+                        plan.append(("click_text", "关闭"))
+                    elif "确定" in before_text:
+                        plan.append(("click_text", "确定"))
+
+                executed = []
+                if not dry_run:
+                    for action, token in plan:
+                        matches = ocr_find_text(img_data, token, threshold=0.2)
+                        if not matches:
+                            executed.append(f"skip {action}('{token}') no match")
+                            continue
+                        # prefer right-most/lower candidate for confirm buttons
+                        matches.sort(key=lambda m: (m["center"][0], m["center"][1]))
+                        cx, cy = matches[-1]["center"]
+                        click(cx, cy)
+                        executed.append(f"click '{token}' at ({cx},{cy})")
+                        time.sleep(1.0)
+                        img_data = take_screenshot() or img_data
+
+                after_text = _full_text(img_data)
+
+                # Verify change
+                changed = before_text != after_text
+                still_blocked = any(k in after_text for k in ["无 AppID", "无AppID", "ECONNRESET", "下载基础库版本"])
+
+                return {
+                    "type": "dict",
+                    "goal": goal,
+                    "plan": [f"{a}:{t}" for a, t in plan],
+                    "executed": executed,
+                    "changed": changed,
+                    "still_blocked": still_blocked,
+                    "text": f"smart_step: changed={changed}, blocked={still_blocked}, actions={len(executed)}"
+                }
+            except Exception as e:
+                return {"type": "text", "text": f"smart_step error: {e}"}
 
         elif name == "click_template":
             app_name = input_data.get("app")
