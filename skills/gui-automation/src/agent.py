@@ -230,6 +230,7 @@ def create_tools():
         # OCR-based click (find text + click in one step)
         {"name": "click_text", "description": "Find text on screen via OCR and click its center. Combines find_text + click in one step. Retries up to 3 times with increasing delay if text not found.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to find and click (case-insensitive partial match)"}, "button": {"type": "string", "enum": ["left", "right", "double"], "default": "left"}, "index": {"type": "integer", "default": 0, "description": "Which occurrence to click if multiple matches (0=first, -1=last)"}, "timeout": {"type": "number", "default": 5, "description": "Max seconds to retry finding the text"}}, "required": ["text"]}},
         {"name": "screen_inspect", "description": "Inspect screenshot content via OCR and return detected hints/errors with recommended next actions. Use this before critical clicks if UI seems unresponsive.", "input_schema": {"type": "object", "properties": {"keywords": {"type": "array", "items": {"type": "string"}, "description": "Optional keywords to detect, e.g. ['无 AppID','错误','失败']"}}}},
+        {"name": "resolve_create_blockers", "description": "Auto-handle common create-page blockers using OCR hints. Handles: missing AppID -> click 测试号, ECONNRESET -> click 重试, then try click 创建.", "input_schema": {"type": "object", "properties": {}}},
         # Template-based clicking (fallback when AT-SPI/vision not available)
         {"name": "click_template", "description": "Click on a UI element based on a learned template. Input: app (template name), element (key in template), optional: offset_x/y (pixel offset)", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}, "element": {"type": "string"}}, "optional": ["offset_x", "offset_y"]}},
         # High-level task automation (B)
@@ -1019,6 +1020,55 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 }
             except Exception as e:
                 return {"type": "text", "text": f"screen_inspect error: {e}"}
+
+        elif name == "resolve_create_blockers":
+            # Heuristic recovery flow for WeChat DevTools create/import blockers
+            img_data = take_screenshot()
+            if not img_data:
+                return {"type": "text", "text": "resolve_create_blockers: failed to take screenshot"}
+            try:
+                from .ocr_tool import ocr_extract_lines, ocr_find_text
+                lines = ocr_extract_lines(img_data, threshold=0.2)
+                full_text = "\n".join([str(x.get("text", "")) for x in lines])
+                actions = []
+
+                # 1) Missing AppID -> try click "测试号"
+                if ("无 AppID" in full_text) or ("无AppID" in full_text) or ("无 ApplID" in full_text):
+                    matches = ocr_find_text(img_data, "测试号", threshold=0.2)
+                    if matches:
+                        matches.sort(key=lambda m: m.get("score", 0), reverse=True)
+                        cx, cy = matches[0]["center"]
+                        click(cx, cy)
+                        actions.append(f"clicked 测试号 at ({cx},{cy})")
+                        time.sleep(1.0)
+                        img_data = take_screenshot() or img_data
+                        full_text = "\n".join([str(x.get("text", "")) for x in ocr_extract_lines(img_data, threshold=0.2)])
+
+                # 2) Network reset popup -> click "重试"
+                if ("ECONNRESET" in full_text) or ("重试" in full_text):
+                    matches = ocr_find_text(img_data, "重试", threshold=0.2)
+                    if matches:
+                        matches.sort(key=lambda m: m.get("score", 0), reverse=True)
+                        cx, cy = matches[0]["center"]
+                        click(cx, cy)
+                        actions.append(f"clicked 重试 at ({cx},{cy})")
+                        time.sleep(1.0)
+                        img_data = take_screenshot() or img_data
+
+                # 3) Try click "创建" if present
+                matches = ocr_find_text(img_data, "创建", threshold=0.2)
+                if matches:
+                    # prefer right-most lower button (usually confirm)
+                    matches.sort(key=lambda m: (m["center"][0], m["center"][1]))
+                    cx, cy = matches[-1]["center"]
+                    click(cx, cy)
+                    actions.append(f"clicked 创建 at ({cx},{cy})")
+                else:
+                    actions.append("no 创建 button detected")
+
+                return {"type": "dict", "actions": actions, "text": f"resolve_create_blockers done: {len(actions)} action(s)"}
+            except Exception as e:
+                return {"type": "text", "text": f"resolve_create_blockers error: {e}"}
 
         elif name == "click_template":
             app_name = input_data.get("app")
