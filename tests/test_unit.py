@@ -339,7 +339,7 @@ class TestCLI(unittest.TestCase):
 
     def test_cli_version(self):
         from src.cli import VERSION
-        assert VERSION == "0.4.0"
+        assert VERSION == "0.6.0"
 
     def test_run_inspect_function_exists(self):
         from src.cli import _run_inspect

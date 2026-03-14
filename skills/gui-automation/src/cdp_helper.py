@@ -251,7 +251,7 @@ class CDPClient:
 
     def click_element(self, selector: str) -> bool:
         """Click element by CSS selector."""
-        js = f'document.querySelector("{selector}")?.click()'
+        js = f'document.querySelector({json.dumps(selector)})?.click()'
         result = self.evaluate(js)
         return result is not None
 
@@ -260,10 +260,10 @@ class CDPClient:
         # Focus + set value + dispatch events
         js = f'''
         (function() {{
-            var el = document.querySelector("{selector}");
+            var el = document.querySelector({json.dumps(selector)});
             if (!el) return false;
             el.focus();
-            el.value = "{text}";
+            el.value = {json.dumps(text)};
             el.dispatchEvent(new Event("input", {{bubbles: true}}));
             el.dispatchEvent(new Event("change", {{bubbles: true}}));
             return true;
@@ -445,7 +445,7 @@ class CDPClient:
         if selector:
             self.evaluate(f'''
                 (function() {{
-                    const el = document.querySelector("{selector}");
+                    const el = document.querySelector({json.dumps(selector)});
                     if (el) {{ el.click(); el.focus(); return true; }}
                     return false;
                 }})()
