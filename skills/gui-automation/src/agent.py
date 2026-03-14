@@ -189,6 +189,8 @@ def create_tools():
         # OCR-based text detection (fast, CPU-friendly)
         {"name": "find_text", "description": "Find text on screen using OCR (RapidOCR/Tesseract). Returns list of occurrences with center coordinates and scores. Supports partial match.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to find (case-insensitive partial match)"}}, "required": ["text"]}},
         {"name": "wait_for_text", "description": "Wait until specified text appears on screen using OCR polling. Returns first match coordinates and elapsed time.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to wait for (case-insensitive partial match)"}, "timeout": {"type": "number", "default": 30, "description": "Maximum seconds to wait"}, "poll_interval": {"type": "number", "default": 0.5, "description": "Seconds between OCR polls"}}, "required": ["text"]}},
+        # OCR-based click (find text + click in one step)
+        {"name": "click_text", "description": "Find text on screen via OCR and click its center. Combines find_text + click in one step. Retries up to 3 times with increasing delay if text not found.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to find and click (case-insensitive partial match)"}, "button": {"type": "string", "enum": ["left", "right", "double"], "default": "left"}, "index": {"type": "integer", "default": 0, "description": "Which occurrence to click if multiple matches (0=first, -1=last)"}, "timeout": {"type": "number", "default": 5, "description": "Max seconds to retry finding the text"}}, "required": ["text"]}},
         # Template-based clicking (fallback when AT-SPI/vision not available)
         {"name": "click_template", "description": "Click on a UI element based on a learned template. Input: app (template name), element (key in template), optional: offset_x/y (pixel offset)", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}, "element": {"type": "string"}}, "optional": ["offset_x", "offset_y"]}},
         # High-level task automation (B)
@@ -1113,6 +1115,44 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                     pass
                 time.sleep(poll_interval)
             return {"type": "text", "text": f"Timeout: text '{text}' not found after {timeout}s"}
+
+        elif name == "click_text":
+            text = input_data.get("text")
+            if not text:
+                return {"type": "text", "text": "Missing 'text' parameter"}
+            button = input_data.get("button", "left")
+            index = input_data.get("index", 0)
+            timeout = input_data.get("timeout", 5)
+            poll_interval = 0.5
+            start = time.time()
+            last_err = None
+            while time.time() - start < timeout:
+                try:
+                    img_data = take_screenshot()
+                    if not img_data:
+                        time.sleep(poll_interval)
+                        continue
+                    from .ocr_tool import ocr_find_text
+                    matches = ocr_find_text(img_data, text)
+                    if matches:
+                        # Sort by score descending, pick by index
+                        matches.sort(key=lambda m: m.get("score", 0), reverse=True)
+                        if abs(index) > len(matches):
+                            return {"type": "text", "text": f"Found {len(matches)} match(es) but index {index} out of range"}
+                        match = matches[index]
+                        cx, cy = match["center"]
+                        if button == "double":
+                            double_click(cx, cy)
+                        elif button == "right":
+                            right_click(cx, cy)
+                        else:
+                            click(cx, cy)
+                        elapsed = round(time.time() - start, 2)
+                        return {"type": "dict", "clicked": match["text"], "center": [cx, cy], "score": match.get("score"), "elapsed": elapsed, "text": f"Clicked '{match['text']}' at ({cx}, {cy}) [{button}]"}
+                except Exception as e:
+                    last_err = str(e)
+                time.sleep(poll_interval)
+            return {"type": "text", "text": f"click_text: '{text}' not found after {timeout}s" + (f" (last error: {last_err})" if last_err else "")}
 
         elif name == "click_template":
             app_name = input_data.get("app")
