@@ -1,57 +1,52 @@
 #!/usr/bin/env python3
-import sys, os, time
-sys.path.insert(0, 'skills/gui-automation/src')
-from cdp_helper import launch_chromium_with_cdp, CDPClient
+"""Light CDP smoke test.
 
-print("=== CDP Connection Test ===")
-print(f"Envvars: DISPLAY={os.environ.get('DISPLAY')}, XAUTHORITY={os.environ.get('XAUTHORITY')}, valid={os.path.exists(os.environ.get('XAUTHORITY','')) and os.path.getsize(os.environ.get('XAUTHORITY',''))>10}")
+Marked as integration because it requires a graphical desktop + Chromium.
+"""
 
-proc = launch_chromium_with_cdp()
-if not proc:
-    print("❌ Launch failed")
-    exit(1)
+import base64
+import os
+import time
 
-print(f"✅ Launched (PID={proc.pid})")
-time.sleep(3)
+import pytest
 
-client = CDPClient()
-if not client.is_available():
-    print("❌ CDP not available")
-    proc.terminate()
-    exit(1)
+from src.cdp_helper import launch_chromium_with_cdp, CDPClient
 
-print("✅ CDP available")
-targets = client.list_targets()
-print(f"Targets: {len(targets)}")
-for t in targets:
-    print(f"  {t.get('type')}: {t.get('url')}")
 
-# Navigate
-print("\nNavigating to https://accounts.google.com/signup ...")
-if not client.navigate("https://accounts.google.com/signup"):
-    print("❌ navigate() returned False")
-else:
-    print("✅ navigate() sent")
+def _has_display() -> bool:
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
-time.sleep(5)
 
-url = client.get_page_url()
-title = client.get_page_title()
-print(f"URL: {url}")
-print(f"Title: {title}")
+@pytest.mark.integration
+@pytest.mark.skipif(not _has_display(), reason="No display server")
+def test_cdp_smoke(tmp_path):
+    proc = launch_chromium_with_cdp()
+    if not proc:
+        pytest.skip("Could not launch Chromium with CDP")
 
-# Try to get a simple element
-exists = client.evaluate("document.querySelector('input') !== null")
-print(f"querySelector('input'): {exists}")
+    try:
+        time.sleep(3)
+        client = CDPClient()
+        if not client.is_available():
+            pytest.skip("CDP endpoint unavailable")
 
-# Screenshot
-b64 = client.take_screenshot()
-if b64:
-    with open("test_cdp_screenshot.png", "wb") as f:
-        f.write(b64)
-    print("✅ Screenshot saved")
-else:
-    print("❌ Screenshot failed")
+        assert client.navigate("https://example.com"), "CDP navigate failed"
+        time.sleep(2)
 
-proc.terminate()
-print("✅ Done")
+        title = (client.get_page_title() or "").lower()
+        url = (client.get_page_url() or "").lower()
+        assert "example" in (title + url), f"Unexpected page: {title} @ {url}"
+
+        result = client.evaluate("document.querySelector('h1') !== null")
+        value = result.get("result", {}).get("value") if isinstance(result, dict) else None
+        assert value is True, f"Expected h1 on page, got: {result}"
+
+        b64 = client.take_screenshot()
+        assert b64, "Screenshot returned empty payload"
+
+        png_bytes = base64.b64decode(b64)
+        shot = tmp_path / "cdp_smoke.png"
+        shot.write_bytes(png_bytes)
+        assert shot.stat().st_size > 0, "Decoded screenshot is empty"
+    finally:
+        proc.terminate()
