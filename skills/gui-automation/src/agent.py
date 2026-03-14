@@ -25,6 +25,34 @@ _WECHAT_LAUNCH_DELAY = float(os.getenv("CLAWUI_WECHAT_LAUNCH_DELAY", "2.0"))
 _NAV_DELAY = float(os.getenv("CLAWUI_NAV_DELAY", "2.0"))
 _OCR_ACTION_DELAY = float(os.getenv("CLAWUI_OCR_ACTION_DELAY", "1.0"))
 
+# --- Structured Planning constants (P2) ---
+_PLAN_MAX_RETRIES = int(os.getenv("CLAWUI_PLAN_MAX_RETRIES", "2"))
+_PLAN_STEP_TIMEOUT = float(os.getenv("CLAWUI_PLAN_STEP_TIMEOUT", "60"))
+_PLAN_LLM_VERIFY = os.getenv("CLAWUI_PLAN_LLM_VERIFY", "0") == "1"
+
+# --- P3-A: Context window compression ---
+_CONTEXT_MAX_TOKENS = int(os.getenv("CLAWUI_CONTEXT_MAX_TOKENS", "80000"))
+_CONTEXT_COMPRESS_RATIO = 0.7  # compress when history exceeds 70% of max
+_CONTEXT_KEEP_RECENT = 6  # keep last N messages verbatim
+
+# --- P3-B: Dynamic model routing by phase ---
+_PLAN_MODEL = os.getenv("CLAWUI_PLAN_MODEL", "")  # empty = same as GUI_AI_MODEL
+_EXEC_MODEL = os.getenv("CLAWUI_EXEC_MODEL", "")
+_VERIFY_MODEL = os.getenv("CLAWUI_VERIFY_MODEL", "")
+
+# --- P3-C: Response caching for read-only tools ---
+_CACHE_TTL = float(os.getenv("CLAWUI_CACHE_TTL", "5"))  # 0 to disable
+_tool_cache = {}  # {cache_key: (timestamp, result)}
+_CACHEABLE_TOOLS = frozenset({
+    "ui_tree", "find_element", "cdp_page_info", "cdp_get_elements",
+    "list_windows", "cdp_list_tabs", "ff_page_info", "ff_list_tabs",
+    "list_recordings", "file_list",
+})
+
+# --- P3-F: Per-tool cost tracking ---
+_tool_token_stats = {}  # {tool_or_phase: {calls: N, input_tokens: N, output_tokens: N}}
+_phase_token_stats = {}  # {phase_name: {input_tokens: N, output_tokens: N}}
+
 # --- Auto Action Verification state ---
 _last_screen_hash = None
 _VERIFY_ACTIONS = frozenset({
@@ -43,6 +71,170 @@ def _quick_screen_hash():
         return hashlib.md5(b64.encode()).hexdigest()
     except Exception:
         return None
+
+
+# --- P3-A: Context window compression helpers ---
+
+def _estimate_tokens(messages):
+    """Estimate token count for a message list (~4 chars per token)."""
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        total += len(block.get("text", ""))
+                    elif block.get("type") == "tool_result":
+                        inner = block.get("content", "")
+                        if isinstance(inner, str):
+                            total += len(inner)
+                        elif isinstance(inner, list):
+                            for part in inner:
+                                if isinstance(part, dict) and part.get("type") == "text":
+                                    total += len(part.get("text", ""))
+                    elif block.get("type") == "tool_use":
+                        total += len(json.dumps(block.get("input", {})))
+                    else:
+                        total += len(str(block))
+    return total // 4
+
+
+def _compress_history(messages, keep_recent=None):
+    """Compress older messages into a summary when history is too large.
+
+    Keeps the first message (task context) and last *keep_recent* messages
+    verbatim. Everything in between is summarized into a single text block.
+
+    Returns the compressed message list (or original if under threshold).
+    """
+    if keep_recent is None:
+        keep_recent = _CONTEXT_KEEP_RECENT
+    if _CONTEXT_MAX_TOKENS <= 0:
+        return messages  # disabled
+
+    est = _estimate_tokens(messages)
+    threshold = int(_CONTEXT_MAX_TOKENS * _CONTEXT_COMPRESS_RATIO)
+    if est < threshold:
+        return messages  # under limit
+
+    if len(messages) <= keep_recent + 1:
+        return messages  # too few messages to compress
+
+    first = messages[0]
+    middle = messages[1:-keep_recent] if keep_recent > 0 else messages[1:]
+    tail = messages[-keep_recent:] if keep_recent > 0 else []
+
+    summary_parts = []
+    for msg in middle:
+        role = msg.get("role", "?")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            text = content[:200]
+        elif isinstance(content, list):
+            texts = []
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "text":
+                        texts.append(block.get("text", "")[:100])
+                    elif block.get("type") == "tool_use":
+                        texts.append(f"[tool:{block.get('name', '?')}]")
+                    elif block.get("type") == "tool_result":
+                        inner = block.get("content", "")
+                        if isinstance(inner, str):
+                            texts.append(inner[:80])
+                        else:
+                            texts.append("[tool_result]")
+            text = " | ".join(texts)[:300]
+        else:
+            text = str(content)[:200]
+        if text.strip():
+            summary_parts.append(f"[{role}] {text}")
+
+    summary_text = (
+        f"[Context compressed: {len(middle)} messages summarized, "
+        f"~{_estimate_tokens(middle)} tokens saved]\n"
+        + "\n".join(summary_parts[-20:])
+    )
+
+    return [first, {"role": "user", "content": summary_text}] + tail
+
+
+# --- P3-C: Response caching helpers ---
+
+def _cache_key(tool_name, input_data):
+    """Build a hashable cache key from tool name and sorted input."""
+    try:
+        key_str = tool_name + ":" + json.dumps(input_data, sort_keys=True, ensure_ascii=False)
+        return hashlib.md5(key_str.encode()).hexdigest()
+    except (TypeError, ValueError):
+        return None
+
+
+def _cache_get(tool_name, input_data):
+    """Return cached result if still valid, else None."""
+    if _CACHE_TTL <= 0 or tool_name not in _CACHEABLE_TOOLS:
+        return None
+    key = _cache_key(tool_name, input_data)
+    if key and key in _tool_cache:
+        ts, result = _tool_cache[key]
+        if (_time.monotonic() - ts) < _CACHE_TTL:
+            return result
+        del _tool_cache[key]
+    return None
+
+
+def _cache_set(tool_name, input_data, result):
+    """Store result in cache if tool is cacheable."""
+    if _CACHE_TTL <= 0 or tool_name not in _CACHEABLE_TOOLS:
+        return
+    key = _cache_key(tool_name, input_data)
+    if key:
+        _tool_cache[key] = (_time.monotonic(), result)
+
+
+# --- P3-F: Per-tool cost tracking helpers ---
+
+def _track_tokens(name, usage):
+    """Accumulate token usage for a tool or phase name."""
+    if not usage:
+        return
+    inp = usage.get("input_tokens", 0)
+    out = usage.get("output_tokens", 0)
+    if inp == 0 and out == 0:
+        return
+    if name not in _tool_token_stats:
+        _tool_token_stats[name] = {"calls": 0, "input_tokens": 0, "output_tokens": 0}
+    _tool_token_stats[name]["calls"] += 1
+    _tool_token_stats[name]["input_tokens"] += inp
+    _tool_token_stats[name]["output_tokens"] += out
+
+
+def _track_phase(phase, usage):
+    """Accumulate token usage for a named phase (plan/exec/verify)."""
+    if not usage:
+        return
+    inp = usage.get("input_tokens", 0)
+    out = usage.get("output_tokens", 0)
+    if inp == 0 and out == 0:
+        return
+    if phase not in _phase_token_stats:
+        _phase_token_stats[phase] = {"input_tokens": 0, "output_tokens": 0}
+    _phase_token_stats[phase]["input_tokens"] += inp
+    _phase_token_stats[phase]["output_tokens"] += out
+
+
+def get_token_stats():
+    """Return current per-tool and per-phase token statistics."""
+    return {"by_tool": dict(_tool_token_stats), "by_phase": dict(_phase_token_stats)}
+
+
+def reset_token_stats():
+    """Reset all token tracking statistics."""
+    _tool_token_stats.clear()
+    _phase_token_stats.clear()
 
 
 def _with_retry(func=None, *, env_prefix="CLAWUI", category="RETRY"):
@@ -201,6 +393,220 @@ System/file tools (direct access, no GUI needed):
 Be efficient. Prefer AT-SPI actions over coordinate clicks when available.
 Prefer system tools over GUI navigation for file and command-line operations."""
 
+PLANNING_PROMPT = """You are a GUI automation planner. Given a task and the current screen state, break the task into numbered steps.
+
+Output format (STRICT - one step per line):
+1. [action description] | EXPECT: [observable screen change] | AFTER: -
+2. [action description] | EXPECT: [observable screen change] | AFTER: 1
+3. [action description] | EXPECT: [observable screen change] | AFTER: 1,2
+
+Rules:
+- Each step = ONE atomic UI action (click, type, wait, navigate)
+- EXPECT describes the visible change after success
+- AFTER lists step numbers this step depends on (- means no dependencies, i.e. can start first)
+- If AFTER is omitted, the step depends on the previous step
+- Maximum 15 steps, critical path only
+- Plain language, no code/JSON"""
+
+REPLAN_PROMPT = """You are a GUI automation planner. A previous plan partially succeeded but a step failed. Generate a REVISED plan for remaining work.
+
+Output format (STRICT - same as above):
+1. [action description] | EXPECT: [observable screen change]
+
+Rules:
+- Do NOT repeat completed steps
+- You may retry failed step differently, or skip if not critical
+- Maximum 10 remaining steps"""
+
+
+def _parse_steps(text, start_id=1):
+    """Parse planner output into Step dicts.
+
+    Accepts lines like:
+        1. Click the File menu | EXPECT: Menu opens
+        2) Type 'hello' in search box | EXPECT: Search results appear | AFTER: 1
+    Skips blank/non-step lines; renumbers sequentially from *start_id*.
+    Extracts optional AFTER: dependency annotations.
+    """
+    steps = []
+    # Map original step numbers to new sequential IDs for depends_on remapping
+    original_to_new = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Match "N." or "N)" at start
+        m = re.match(r'^(\d+)[.)]\s*(.+)', line)
+        if not m:
+            continue
+        original_num = int(m.group(1))
+        body = m.group(2)
+
+        # Extract AFTER: dependency (P3-E)
+        depends_on = []
+        after_match = re.search(r'\|\s*AFTER:\s*([^\|]+)', body, re.IGNORECASE)
+        if after_match:
+            after_str = after_match.group(1).strip()
+            body = body[:after_match.start()].strip()
+            if after_str != "-":
+                for dep_str in re.split(r'[,\s]+', after_str):
+                    dep_str = dep_str.strip()
+                    if dep_str.isdigit():
+                        depends_on.append(int(dep_str))
+
+        # Split on " | EXPECT:" (case-insensitive)
+        parts = re.split(r'\s*\|\s*EXPECT:\s*', body, maxsplit=1, flags=re.IGNORECASE)
+        description = parts[0].strip()
+        expected_change = parts[1].strip() if len(parts) > 1 else ""
+
+        new_id = start_id + len(steps)
+        original_to_new[original_num] = new_id
+
+        steps.append({
+            "id": new_id,
+            "description": description,
+            "expected_change": expected_change,
+            "depends_on": depends_on,  # raw original numbers, remapped below
+            "max_retries": _PLAN_MAX_RETRIES,
+            "timeout_sec": _PLAN_STEP_TIMEOUT,
+            "status": "pending",
+        })
+
+    # Remap depends_on from original step numbers to new sequential IDs
+    for step in steps:
+        step["depends_on"] = [
+            original_to_new[d] for d in step["depends_on"]
+            if d in original_to_new
+        ]
+    return steps
+
+
+def _verify_step(result, expected_change="", backend=None):
+    """Verify a step succeeded.
+
+    Tier 1 (always): screen-hash change detection.
+    Tier 2 (opt-in via CLAWUI_PLAN_LLM_VERIFY=1): ask backend to confirm.
+    """
+    # Tier 1: screen changed?
+    if not result.get("screen_changed", False):
+        return False
+
+    # Tier 2: LLM verification (optional)
+    if _PLAN_LLM_VERIFY and expected_change and backend is not None:
+        try:
+            prompt = (
+                f"A GUI action was performed. Expected visible change: '{expected_change}'. "
+                f"Tool output: {result.get('output', '')}. "
+                "Did the expected change happen? Reply YES or NO only."
+            )
+            resp = backend.chat(
+                [{"role": "user", "content": prompt}], [], SYSTEM_PROMPT
+            )
+            _track_phase("verify", resp.get("usage"))
+            answer = resp.get("text", "").strip().upper()
+            return answer.startswith("YES")
+        except Exception:
+            # LLM verification failed; fall back to tier-1 result
+            pass
+
+    return True
+
+
+def _execute_step(step, backend, tools):
+    """Execute a single plan step via a mini agent loop.
+
+    Returns a StepResult dict.
+    """
+    start = _time.monotonic()
+    hash_before = _quick_screen_hash()
+
+    messages = [
+        {"role": "user", "content": (
+            f"Execute this GUI step: {step['description']}\n"
+            f"Expected result: {step['expected_change']}\n"
+            "Use the available tools. When done, reply with DONE."
+        )}
+    ]
+
+    tool_calls_log = []
+    output_parts = []
+    deadline = start + step["timeout_sec"]
+    max_inner = 10  # safety cap on inner iterations
+
+    for _ in range(max_inner):
+        if _time.monotonic() > deadline:
+            break
+        try:
+            messages = _compress_history(messages, keep_recent=4)
+            resp = backend.chat(messages, tools, SYSTEM_PROMPT)
+            _track_tokens(f"step_{step['id']}", resp.get("usage"))
+            _track_phase("execute", resp.get("usage"))
+        except Exception as e:
+            output_parts.append(f"LLM error: {e}")
+            break
+
+        tc = resp.get("tool_calls", [])
+        if not tc:
+            # No tool calls — LLM is done
+            output_parts.append(resp.get("text", ""))
+            break
+
+        for call in tc:
+            tname, tinput = call["name"], call["input"]
+            call_id = call.get("id", f"step_{step['id']}")
+            try:
+                tresult = execute_tool(tname, tinput)
+            except Exception as e:
+                tresult = {"type": "text", "text": f"Tool error: {e}"}
+            tool_calls_log.append({"tool": tname, "input": tinput})
+            output_parts.append(f"{tname}: {tresult.get('text', '')}")
+            messages.append({
+                "role": "assistant", "content": None,
+                "tool_calls": [{"id": call_id, "type": "tool_use",
+                                "name": tname, "input": tinput}]
+            })
+            messages.append({
+                "role": "user",
+                "content": f"Tool: {tname}\nResult: {json.dumps(tresult, ensure_ascii=False)}"
+            })
+
+    hash_after = _quick_screen_hash()
+    elapsed = _time.monotonic() - start
+
+    return {
+        "step_id": step["id"],
+        "success": True,  # tentative; caller uses _verify_step
+        "output": "\n".join(output_parts),
+        "screenshot_hash_before": hash_before,
+        "screenshot_hash_after": hash_after,
+        "screen_changed": (hash_before != hash_after) if (hash_before and hash_after) else True,
+        "error": None,
+        "tool_calls": tool_calls_log,
+        "elapsed_sec": round(elapsed, 2),
+    }
+
+
+def _replan(completed_steps, failed_step, error_msg, backend, tools):
+    """Ask LLM to produce a revised plan after a step failure.
+
+    Returns a list of new Step dicts (renumbered from failed step's ID).
+    """
+    completed_summary = "\n".join(
+        f"  {s['id']}. {s['description']} — DONE" for s in completed_steps
+    )
+    context = (
+        f"Completed steps:\n{completed_summary}\n\n"
+        f"Failed step {failed_step['id']}: {failed_step['description']}\n"
+        f"Error: {error_msg}\n\n"
+        "Generate a revised plan for the remaining work."
+    )
+    messages = [{"role": "user", "content": context}]
+    try:
+        resp = backend.chat(messages, [], REPLAN_PROMPT)
+        return _parse_steps(resp.get("text", ""), start_id=failed_step["id"])
+    except Exception:
+        return []
+
 
 def create_tools():
     return [
@@ -270,7 +676,7 @@ def create_tools():
         # Template-based clicking (fallback when AT-SPI/vision not available)
         {"name": "click_template", "description": "Click on a UI element based on a learned template. Input: app (template name), element (key in template), optional: offset_x/y (pixel offset)", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}, "element": {"type": "string"}}, "optional": ["offset_x", "offset_y"]}},
         # High-level task automation (B)
-        {"name": "plan_and_execute", "description": "Given a natural language task, autonomously break it down into steps and execute using available tools. Returns final result and summary.", "input_schema": {"type": "object", "properties": {"task": {"type": "string", "description": "Natural language description of the task to accomplish"}}, "required": ["task"]}},
+        {"name": "plan_and_execute", "description": "Given a natural language task, autonomously break it down into steps, execute with verification, and replan on failure. Returns structured result with step-level detail.", "input_schema": {"type": "object", "properties": {"task": {"type": "string", "description": "Natural language description of the task to accomplish"}, "max_steps": {"type": "integer", "default": 15, "description": "Maximum plan steps (default 15)"}, "max_retries_per_step": {"type": "integer", "default": 2, "description": "Max retries per failed step"}, "step_timeout": {"type": "number", "default": 60, "description": "Timeout per step in seconds"}}, "required": ["task"]}},
         {"name": "github_create_repo", "description": "Create a GitHub repository. Tries using GITHUB_TOKEN, then gh CLI, then browser automation (requires logged-in session).", "input_schema": {"type": "object", "properties": {"repo_name": {"type": "string", "description": "Repository name (e.g., 'my-repo')"}, "repo_desc": {"type": "string", "description": "Description (optional)"}}, "required": ["repo_name"]}},
         # Annotated screenshot + click by index
         {"name": "annotated_screenshot", "description": "Take a screenshot with numbered red labels on all interactive elements. Returns the annotated image + element list. Use click_by_index to click any labeled element.", "input_schema": {"type": "object", "properties": {"sources": {"type": "string", "enum": ["auto", "atspi", "cdp", "both"], "default": "auto", "description": "Element detection source"}}}},
@@ -287,7 +693,16 @@ def create_tools():
 def execute_tool(name: str, input_data: dict) -> dict:
     """Execute a tool and return result."""
     global _last_screen_hash
+
+    # P3-C: Check cache for read-only tools
+    cached = _cache_get(name, input_data)
+    if cached is not None:
+        return cached
+
     result = _execute_tool_inner(name, input_data)
+
+    # P3-C: Cache read-only tool results
+    _cache_set(name, input_data, result)
 
     # Update hash when screenshot tools produce images
     if name in ("screenshot", "cdp_screenshot", "ff_screenshot", "annotated_screenshot"):
@@ -615,72 +1030,145 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             except Exception as e:
                 return {"type": "text", "text": f"describe_screen error: {e}"}
 
-        # B. High-level task automation (plan-and-execute)
+        # B. High-level task automation (plan-and-execute) — P2 structured planning
         elif name == "plan_and_execute":
             task = input_data.get("task")
             if not task:
                 return {"type": "text", "text": "Missing 'task' parameter"}
-            max_steps = input_data.get("max_steps", 30)
+            max_steps = input_data.get("max_steps", 15)
+            max_retries = input_data.get("max_retries_per_step", _PLAN_MAX_RETRIES)
+            step_timeout = input_data.get("step_timeout", _PLAN_STEP_TIMEOUT)
+
+            # P3-B: Phase-aware model routing
             try:
-                backend = get_backend()
+                plan_backend = get_backend(model_override=_PLAN_MODEL or None)
             except Exception as e:
                 return {"type": "text", "text": f"get_backend error: {e}"}
-            
+            try:
+                exec_backend = get_backend(model_override=_EXEC_MODEL or None)
+            except Exception:
+                exec_backend = plan_backend
+            try:
+                verify_backend = get_backend(model_override=_VERIFY_MODEL or None)
+            except Exception:
+                verify_backend = plan_backend
+
             # Prepare tools list (exclude plan_and_execute to avoid recursion)
             all_tools = create_tools()
-            tools = [t for t in all_tools if t["name"] != "plan_and_execute"]
-            
-            messages = [{"role": "user", "content": task}]
-            history = []
-            step = 0
-            
-            while step < max_steps:
-                try:
-                    resp = backend.chat(messages, tools, SYSTEM_PROMPT)
-                except Exception as e:
-                    return {"type": "text", "text": f"LLM call failed at step {step}: {e}"}
-                
-                tool_calls = resp.get("tool_calls", [])
-                if not tool_calls:
-                    # Task complete
-                    summary = resp.get("text", "")
-                    return {"type": "dict", "completed": True, "summary": summary, "steps": step, "history": history}
-                
-                # Process each tool call
-                for call in tool_calls:
-                    tname = call["name"]
-                    tinput = call["input"]
-                    call_id = call.get("id", f"call_{step}_{len(history)}")
-                    
-                    # Execute the tool
-                    try:
-                        tresult = execute_tool(tname, tinput)
-                    except Exception as e:
-                        tresult = {"type": "text", "text": f"Tool execution error: {e}"}
-                    
-                    history.append({
-                        "step": step + 1,
-                        "tool": tname,
-                        "input": tinput,
-                        "result": tresult,
-                        "call_id": call_id
-                    })
-                    
-                    # Append assistant message with tool_use
-                    messages.append({
-                        "role": "assistant",
-                        "content": None,
-                        "tool_calls": [{"id": call_id, "type": "tool_use", "name": tname, "input": tinput}]
-                    })
-                    # Append user message with tool result
-                    messages.append({
-                        "role": "user",
-                        "content": f"Tool: {tname}\nResult: {json.dumps(tresult, ensure_ascii=False)}"
-                    })
-                    
-                step += 1
-            
-            return {"type": "dict", "completed": False, "summary": "Max steps reached", "steps": max_steps, "history": history}
+            pe_tools = [t for t in all_tools if t["name"] != "plan_and_execute"]
+
+            # --- Phase 1: Plan ---
+            plan_msg = [{"role": "user", "content": f"Task: {task}"}]
+            try:
+                plan_resp = plan_backend.chat(plan_msg, [], PLANNING_PROMPT)
+                _track_phase("plan", plan_resp.get("usage"))
+            except Exception as e:
+                return {"type": "text", "text": f"Planning LLM call failed: {e}"}
+
+            plan_text = plan_resp.get("text", "")
+            steps = _parse_steps(plan_text)
+            if not steps:
+                return {"type": "text", "text": f"Planner produced no steps. Raw output:\n{plan_text}"}
+
+            # Clamp to max_steps
+            steps = steps[:max_steps]
+
+            # Apply per-call overrides
+            for s in steps:
+                s["max_retries"] = max_retries
+                s["timeout_sec"] = step_timeout
+
+            # --- Phase 2: Execute + Verify (P3-B: phase-aware backends) ---
+            results = []
+            completed_steps = []
+            completed_ids = set()  # P3-E: track completed step IDs
+            replans = 0
+            i = 0
+
+            while i < len(steps):
+                step = steps[i]
+
+                # P3-E: Check dependencies — skip ahead if deps not met
+                deps = step.get("depends_on", [])
+                if deps and not all(d in completed_ids for d in deps):
+                    # Dependencies not yet satisfied; skip for now
+                    # (In sequential execution, this means a dep failed)
+                    step["status"] = "skipped"
+                    i += 1
+                    continue
+
+                step["status"] = "running"
+                success = False
+
+                for attempt in range(step["max_retries"] + 1):
+                    result = _execute_step(step, exec_backend, pe_tools)
+                    verified = _verify_step(result, step["expected_change"], verify_backend)
+                    result["success"] = verified
+                    if verified:
+                        success = True
+                        break
+                    # Retry — result stays as last attempt
+                    if attempt < step["max_retries"]:
+                        result["error"] = f"Verification failed (attempt {attempt + 1})"
+
+                results.append(result)
+
+                if success:
+                    step["status"] = "done"
+                    completed_steps.append(step)
+                    completed_ids.add(step["id"])  # P3-E
+                    i += 1
+                    continue
+
+                # --- Phase 3: Replan on failure (uses plan_backend) ---
+                step["status"] = "failed"
+                error_msg = result.get("error") or result.get("output", "unknown error")
+                new_steps = _replan(completed_steps, step, error_msg, plan_backend, pe_tools)
+                if new_steps:
+                    replans += 1
+                    # Replace remaining steps with replan output
+                    steps = steps[:i] + [step] + new_steps
+                    # Skip the failed step, continue with replan
+                    i += 1
+                    continue
+                else:
+                    # Replan produced nothing — abort
+                    i += 1
+                    break
+
+            steps_done = sum(1 for s in steps if s.get("status") == "done")
+            steps_failed = sum(1 for s in steps if s.get("status") == "failed")
+            steps_skipped = sum(1 for s in steps if s.get("status") == "skipped")
+            all_ok = steps_failed == 0 and steps_skipped == 0 and steps_done > 0
+
+            summary_parts = [f"Plan: {len(steps)} steps, {steps_done} done, {steps_failed} failed, {steps_skipped} skipped, {replans} replans"]
+            for r in results:
+                sid = r["step_id"]
+                s = next((s for s in steps if s["id"] == sid), None)
+                desc = s["description"] if s else "?"
+                status = "OK" if r["success"] else "FAIL"
+                summary_parts.append(f"  {sid}. [{status}] {desc} ({r['elapsed_sec']}s)")
+
+            # P3-F: append phase cost summary
+            stats = get_token_stats()
+            if stats["by_phase"]:
+                summary_parts.append("  Token usage by phase:")
+                for phase, pstat in stats["by_phase"].items():
+                    summary_parts.append(f"    {phase}: in={pstat['input_tokens']}, out={pstat['output_tokens']}")
+
+            return {
+                "type": "dict",
+                "completed": all_ok,
+                "summary": "\n".join(summary_parts),
+                "plan": plan_text,
+                "steps_total": len(steps),
+                "steps_done": steps_done,
+                "steps_failed": steps_failed,
+                "replans": replans,
+                "results": results,
+                "token_stats": stats,
+                "text": "\n".join(summary_parts),
+            }
 
         # Application launch tools
         elif name == "launch_app":
@@ -1439,15 +1927,21 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
     total_output_tokens = 0
     max_tokens_budget = int(os.getenv("CLAWUI_MAX_TOKENS", "0"))  # 0 = unlimited
 
+    # Reset per-run token stats
+    reset_token_stats()
+
     for step in range(max_steps):
         print(f"\n--- Step {step + 1}/{max_steps} ---")
 
         try:
+            # P3-A: Compress history before LLM call
+            messages = _compress_history(messages)
             response = backend.chat(
                 messages=messages,
                 tools=tools,
                 system=SYSTEM_PROMPT,
             )
+            _track_phase("run_agent", response.get("usage"))
             consecutive_errors = 0
         except Exception as e:
             consecutive_errors += 1
@@ -1501,6 +1995,7 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
         tool_results = []
         for tool_use in tool_uses:
             tool_result = execute_tool(tool_use.name, tool_use.input)
+            _track_tokens(tool_use.name, response.get("usage"))
 
             if tool_result["type"] == "image":
                 tool_results.append({
@@ -1524,12 +2019,18 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
 
         messages.append({"role": "user", "content": tool_results})
 
-    # Final token summary
+    # Final token summary (P1 + P3-F enhanced)
     if total_input_tokens or total_output_tokens:
         print(f"\n=== Token Usage Summary ===")
         print(f"  Input tokens:  {total_input_tokens}")
         print(f"  Output tokens: {total_output_tokens}")
         print(f"  Total tokens:  {total_input_tokens + total_output_tokens}")
+        # P3-F: Per-tool breakdown
+        stats = get_token_stats()
+        if stats["by_tool"]:
+            print(f"\n  Per-tool breakdown:")
+            for tname, tstat in sorted(stats["by_tool"].items(), key=lambda x: x[1]["input_tokens"], reverse=True):
+                print(f"    {tname}: {tstat['calls']} calls, in={tstat['input_tokens']}, out={tstat['output_tokens']}")
 
     if last_response and last_response.get("text"):
         return last_response["text"]

@@ -28,6 +28,7 @@ class LabeledElement:
     center_y: int
     source: str  # "atspi" or "cdp"
     selector: str | None = None  # CSS selector for CDP elements
+    confidence: float = 0.5  # P3-D: grounding confidence (0-1)
 
     def to_dict(self) -> dict:
         return {
@@ -39,6 +40,7 @@ class LabeledElement:
             "center": [self.center_x, self.center_y],
             "source": self.source,
             "selector": self.selector,
+            "confidence": self.confidence,
         }
 
 
@@ -144,6 +146,89 @@ def _dedup_elements(elements: list[dict]) -> list[dict]:
     return seen
 
 
+def _iou(box_a, box_b):
+    """Compute Intersection over Union between two (x, y, w, h) boxes."""
+    ax1, ay1 = box_a[0], box_a[1]
+    ax2, ay2 = ax1 + box_a[2], ay1 + box_a[3]
+    bx1, by1 = box_b[0], box_b[1]
+    bx2, by2 = bx1 + box_b[2], by1 + box_b[3]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    area_a = box_a[2] * box_a[3]
+    area_b = box_b[2] * box_b[3]
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _ocr_cross_validate(elements: list[dict], img_b64: str) -> list[dict]:
+    """P3-D: Cross-validate element list with OCR text boxes.
+
+    Elements whose bounding box overlaps an OCR text box (IoU > 0.1 or center
+    within element) get a confidence boost.  Returns elements with updated
+    'confidence' field.
+    """
+    try:
+        from .ocr_tool import ocr_extract_lines
+    except ImportError:
+        return elements  # OCR not available
+
+    try:
+        ocr_lines = ocr_extract_lines(img_b64, threshold=0.2)
+    except Exception:
+        return elements
+
+    if not ocr_lines:
+        return elements
+
+    # Convert OCR bboxes to (x, y, w, h)
+    ocr_boxes = []
+    for line in ocr_lines:
+        bbox = line.get("bbox", [])
+        text = line.get("text", "")
+        if len(bbox) >= 4:
+            xs = [p[0] for p in bbox]
+            ys = [p[1] for p in bbox]
+            x, y = int(min(xs)), int(min(ys))
+            w, h = int(max(xs) - x), int(max(ys) - y)
+            ocr_boxes.append({"x": x, "y": y, "w": w, "h": h, "text": text})
+
+    for el in elements:
+        el_box = (el["x"], el["y"], el["width"], el["height"])
+        el_cx = el["x"] + el["width"] // 2
+        el_cy = el["y"] + el["height"] // 2
+        best_iou = 0.0
+        name_match = False
+
+        for ocr in ocr_boxes:
+            ocr_box = (ocr["x"], ocr["y"], ocr["w"], ocr["h"])
+            iou = _iou(el_box, ocr_box)
+            if iou > best_iou:
+                best_iou = iou
+
+            # Also check if OCR center is within element bbox
+            ocr_cx = ocr["x"] + ocr["w"] // 2
+            ocr_cy = ocr["y"] + ocr["h"] // 2
+            if (el["x"] <= ocr_cx <= el["x"] + el["width"]
+                    and el["y"] <= ocr_cy <= el["y"] + el["height"]):
+                best_iou = max(best_iou, 0.15)
+
+            # Check name match
+            if el.get("name") and ocr["text"]:
+                if el["name"].lower() in ocr["text"].lower() or ocr["text"].lower() in el["name"].lower():
+                    name_match = True
+
+        # Compute confidence: base 0.5, +0.3 for spatial overlap, +0.2 for name match
+        conf = 0.5
+        if best_iou > 0.1:
+            conf += min(best_iou * 1.5, 0.3)
+        if name_match:
+            conf += 0.2
+        el["confidence"] = round(min(conf, 1.0), 2)
+
+    return elements
+
+
 def annotated_screenshot(sources: str = "auto") -> tuple[str, list[LabeledElement]]:
     """
     Take a screenshot and overlay numbered labels on interactive elements.
@@ -168,6 +253,10 @@ def annotated_screenshot(sources: str = "auto") -> tuple[str, list[LabeledElemen
 
     # Take screenshot
     img_b64 = take_screenshot(scale=False)
+
+    # P3-D: OCR cross-validation (Mixture of Grounding)
+    elements = _ocr_cross_validate(elements, img_b64)
+
     img = Image.open(io.BytesIO(base64.b64decode(img_b64)))
     draw = ImageDraw.Draw(img)
 
@@ -197,6 +286,7 @@ def annotated_screenshot(sources: str = "auto") -> tuple[str, list[LabeledElemen
             center_x=cx, center_y=cy,
             source=el.get("source", "unknown"),
             selector=el.get("selector"),
+            confidence=el.get("confidence", 0.5),
         )
         labeled.append(le)
 
