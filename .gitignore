@@ -1,53 +1,48 @@
-# OpenClaw workspace ignores
 
-# Sensitive configuration (local only)
-.openclaw/
-.clawhub/
-credentials/
-
-# OS / editor junk
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
 *~
-.idea/
-.vscode/
+build/
+.clawhub/
 *.code-workspace
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
+.coverage
+credentials/
+dist/
+.DS_Store
 *.egg-info/
 .eggs/
-.tox/
-.coverage
+.env
+env/
+# Generated artifacts
+.idea/
+*.key
+lerna-debug.log
 *.log
-
 # Node
 node_modules/
 npm-debug.log
-yarn-error.log
-lerna-debug.log
-.pnpm-debug.log
-dist/
-build/
-
-# Secrets
-.env
-.secrets/
-.vault/
+.openclaw/
+# OpenClaw workspace ignores
+# OS / editor junk
 *.pem
-*.key
-
-# Project-specific
+.pnpm-debug.log
 projects/*/gui-automation  # symlink to skills version, don't commit
-
-# Generated artifacts
+# Project-specific
+*.pyc
+__pycache__/
+*.pyd
+*.pyo
+# Python
+.Python
 screenshots/
+screenshots/*.png
+.secrets/
+# Secrets
+# Sensitive configuration (local only)
+*.swo
+*.swp
+Thumbs.db
+.tox/
+.vault/
+.venv/
+venv/
+.vscode/
+yarn-error.log
