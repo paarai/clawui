@@ -72,6 +72,16 @@ def test_cdp_import():
     from src.cdp_helper import CDPClient
     return True
 
+def test_cdp_wait_for_selector_result_parsing():
+    """wait_for_selector should correctly parse Runtime.evaluate nested result.value payload."""
+    from src.cdp_helper import CDPClient
+    c = CDPClient()
+    c.evaluate = lambda _expr: {"result": {"type": "object", "value": {"found": True, "text": "Submit", "tag": "BUTTON"}}}
+    r = c.wait_for_selector("button", timeout=0.1, poll_interval=0.01)
+    assert r.get("found") is True, f"Expected found=True, got {r}"
+    assert r.get("text") == "Submit", f"Expected text='Submit', got {r}"
+    return True
+
 def test_marionette_import():
     from src.marionette_helper import MarionetteClient
     return True
@@ -230,6 +240,7 @@ if __name__ == "__main__":
     test("AT-SPI import", test_atspi_import)
     test("X11 import", test_x11_import)
     test("CDP import", test_cdp_import)
+    test("CDP wait_for_selector result parsing", test_cdp_wait_for_selector_result_parsing)
     test("Marionette import", test_marionette_import)
     test("Perception import", test_perception_import)
     test("OCR import", test_ocr_import)
