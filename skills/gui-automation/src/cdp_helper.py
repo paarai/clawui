@@ -594,6 +594,54 @@ def _profile_dirs_for_launcher(launcher: List[str], port: int) -> List[str]:
     return dirs
 
 
+def sync_cookies_from_main_profile(port: int = 9222) -> bool:
+    """Copy cookies from the user's main Chromium profile to the CDP headless profile.
+
+    Enables the headless browser to share authenticated sessions (GitHub, etc.)
+    from the user's regular browser without needing separate login flows.
+    Both profiles must use the same --password-store (e.g., 'basic') so that
+    the cookie encryption key is compatible.
+
+    Returns True if cookies were synced successfully.
+    """
+    import shutil
+
+    snap_common = os.path.join(os.path.expanduser("~"), "snap", "chromium", "common")
+    src_dir = os.path.join(snap_common, "chromium", "Default")
+    dst_dir = os.path.join(snap_common, f"clawui-profile-{port}", "Default")
+
+    src = os.path.join(src_dir, "Cookies")
+    dst = os.path.join(dst_dir, "Cookies")
+
+    if not os.path.exists(src):
+        # Try non-snap paths
+        for candidate in [
+            os.path.join(os.path.expanduser("~"), ".config", "chromium", "Default", "Cookies"),
+            os.path.join(os.path.expanduser("~"), ".config", "google-chrome", "Default", "Cookies"),
+        ]:
+            if os.path.exists(candidate):
+                src = candidate
+                break
+        else:
+            return False
+
+    if not os.path.isdir(os.path.dirname(dst)):
+        return False
+
+    try:
+        shutil.copy2(src, dst)
+        for ext in ['-wal', '-shm']:
+            src_ext = src + ext
+            dst_ext = dst + ext
+            if os.path.exists(src_ext):
+                shutil.copy2(src_ext, dst_ext)
+            elif os.path.exists(dst_ext):
+                os.remove(dst_ext)
+        return True
+    except Exception:
+        return False
+
+
 def launch_chromium_with_cdp(port: int = 9222, url: str = "about:blank") -> Optional[subprocess.Popen]:
     """Launch Chromium/Chrome with remote debugging enabled.
 
@@ -695,6 +743,9 @@ def get_or_create_cdp_client(port: int = 9222) -> Optional[CDPClient]:
     client = CDPClient(port=port)
     if client.is_available():
         return client
+
+    # Sync cookies from main profile before launching
+    sync_cookies_from_main_profile(port=port)
 
     # Try to launch a browser
     proc = launch_chromium_with_cdp(port=port)
