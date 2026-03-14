@@ -1426,7 +1426,8 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
         return {"type": "text", "text": f"Error: {e}"}
 
 
-def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-20250514"):
+def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-20250514",
+              log_file: str = None):
     """
     Run the GUI automation agent for a given task.
     
@@ -1434,9 +1435,22 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
         task: Natural language description of what to do
         max_steps: Maximum number of tool-use steps
         model: AI model to use
+        log_file: Optional path to write structured JSON run log
     """
+    import datetime
     backend = get_backend(model)
     tools = create_tools()
+
+    # Structured run log for debugging and replay analysis
+    run_log = {
+        "task": task,
+        "model": model,
+        "max_steps": max_steps,
+        "started_at": datetime.datetime.now().isoformat(),
+        "steps": [],
+        "result": None,
+        "status": "running",
+    }
 
     # Initial context: provide UI tree + active window
     active = get_active_window()
@@ -1446,6 +1460,18 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
     messages = [{"role": "user", "content": initial_context}]
     consecutive_errors = 0
     last_response = None
+
+    def _save_log():
+        """Write run log to file if configured."""
+        if not log_file:
+            return
+        run_log["finished_at"] = datetime.datetime.now().isoformat()
+        try:
+            os.makedirs(os.path.dirname(log_file) if os.path.dirname(log_file) else ".", exist_ok=True)
+            with open(log_file, "w") as f:
+                json.dump(run_log, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"[WARN] Failed to write run log: {e}", file=sys.stderr)
 
     for step in range(max_steps):
         print(f"\n--- Step {step + 1}/{max_steps} ---")
@@ -1460,7 +1486,11 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
         except Exception as e:
             consecutive_errors += 1
             print(f"Backend error: {e}")
+            run_log["steps"].append({"step": step + 1, "error": str(e), "type": "backend_error"})
             if consecutive_errors >= 3:
+                run_log["status"] = "error"
+                run_log["result"] = f"3 consecutive backend errors. Last: {e}"
+                _save_log()
                 return f"Agent stopped: 3 consecutive backend errors. Last: {e}"
             messages.append({"role": "user", "content": f"[System] Backend error occurred: {e}. Please retry."})
             continue
@@ -1489,14 +1519,36 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
 
         if not tool_uses:
             print("Agent finished (no more tool calls).")
+            # Log final text from assistant
+            for block in response["raw_content"]:
+                if block.type == "text":
+                    run_log["result"] = block.text
+            run_log["status"] = "completed"
+            _save_log()
             break
 
         # Execute tools
+        step_log = {"step": step + 1, "tools": [], "type": "tool_step"}
         tool_results = []
         for tool_use in tool_uses:
+            t0 = _time.time()
             tool_result = execute_tool(tool_use.name, tool_use.input)
+            elapsed = round(_time.time() - t0, 3)
 
-            if tool_result["type"] == "image":
+            # Log tool execution (skip base64 image data to keep log small)
+            tool_log_entry = {
+                "name": tool_use.name,
+                "input": tool_use.input,
+                "result_type": tool_result.get("type", "text"),
+                "elapsed_s": elapsed,
+            }
+            if tool_result.get("text"):
+                tool_log_entry["result_text"] = tool_result["text"][:500]
+            step_log["tools"].append(tool_log_entry)
+
+            result_type = tool_result.get("type", "text")
+
+            if result_type == "image":
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_use.id,
@@ -1509,6 +1561,34 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                         }
                     }],
                 })
+            elif result_type == "image_and_text":
+                # Annotated screenshots: send both image and text description
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use.id,
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": tool_result["base64"],
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": tool_result.get("text", ""),
+                        }
+                    ],
+                })
+            elif result_type == "dict":
+                # Structured data results (e.g., list_windows)
+                result_copy = {k: v for k, v in tool_result.items() if k != "type"}
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use.id,
+                    "content": json.dumps(result_copy, ensure_ascii=False, indent=2),
+                })
             else:
                 tool_results.append({
                     "type": "tool_result",
@@ -1517,6 +1597,13 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                 })
 
         messages.append({"role": "user", "content": tool_results})
+        run_log["steps"].append(step_log)
+
+    if run_log["status"] == "running":
+        run_log["status"] = "max_steps_reached"
+    if last_response and last_response.get("text"):
+        run_log["result"] = last_response["text"]
+    _save_log()
 
     if last_response and last_response.get("text"):
         return last_response["text"]
