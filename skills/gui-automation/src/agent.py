@@ -196,9 +196,9 @@ def create_tools():
         # High-level task automation (B)
         {"name": "plan_and_execute", "description": "Given a natural language task, autonomously break it down into steps and execute using available tools. Returns final result and summary.", "input_schema": {"type": "object", "properties": {"task": {"type": "string", "description": "Natural language description of the task to accomplish"}}, "required": ["task"]}},
         {"name": "github_create_repo", "description": "Create a GitHub repository. Tries using GITHUB_TOKEN, then gh CLI, then browser automation (requires logged-in session).", "input_schema": {"type": "object", "properties": {"repo_name": {"type": "string", "description": "Repository name (e.g., 'my-repo')"}, "repo_desc": {"type": "string", "description": "Description (optional)"}}, "required": ["repo_name"]}},
-        # Annotated screenshot - numbered element labels for precise interaction
-        {"name": "annotated_screenshot", "description": "Take a screenshot with numbered red labels on all interactive elements (buttons, inputs, links, etc). Returns the annotated image + element list with indices. Use click_by_index to click a labeled element.", "input_schema": {"type": "object", "properties": {"source": {"type": "string", "enum": ["auto", "atspi", "cdp"], "default": "auto", "description": "Element source: atspi (desktop), cdp (browser), auto (both)"}, "max_elements": {"type": "integer", "default": 80}}}},
-        {"name": "click_by_index", "description": "Click an element by its index number from the last annotated_screenshot. Much more reliable than guessing coordinates.", "input_schema": {"type": "object", "properties": {"index": {"type": "integer", "description": "Element index from annotated_screenshot"}, "button": {"type": "string", "enum": ["left", "right", "double"], "default": "left"}}, "required": ["index"]}},
+        # Annotated screenshot + click by index
+        {"name": "annotated_screenshot", "description": "Take a screenshot with numbered red labels on all interactive elements. Returns the annotated image + element list. Use click_by_index to click any labeled element.", "input_schema": {"type": "object", "properties": {"sources": {"type": "string", "enum": ["auto", "atspi", "cdp", "both"], "default": "auto", "description": "Element detection source"}}}},
+        {"name": "click_by_index", "description": "Click an element by its number from the last annotated_screenshot. Much more reliable than coordinate guessing.", "input_schema": {"type": "object", "properties": {"index": {"type": "integer", "description": "Element number from annotated screenshot"}, "button": {"type": "string", "enum": ["left", "right", "double"], "default": "left"}}, "required": ["index"]}},
     ]
 
 
@@ -1262,39 +1262,38 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 return {"type": "text", "text": f"Error during GitHub repo creation: {e}"}
 
         elif name == "annotated_screenshot":
-            from .annotated_screenshot import take_annotated_screenshot
-            source = input_data.get("source", "auto")
-            max_el = input_data.get("max_elements", 80)
-            b64, element_list = take_annotated_screenshot(source=source, max_elements=max_el)
-            # Store element list for click_by_index
-            _execute_tool_inner._last_annotated_elements = element_list
-            # Build text summary
-            summary_lines = [f"[{e['index']}] {e['role']}: {e['name']}" for e in element_list[:50]]
-            if len(element_list) > 50:
-                summary_lines.append(f"... and {len(element_list) - 50} more elements")
-            summary = f"Found {len(element_list)} interactive elements:\n" + "\n".join(summary_lines)
-            return {"type": "image_and_text", "base64": b64, "text": summary}
+            from .annotated_screenshot import annotated_screenshot as _ann_ss
+            sources = input_data.get("sources", "auto")
+            img_b64, elements = _ann_ss(sources=sources)
+            element_list = "\n".join(
+                f"  [{e.index}] {e.role} '{e.name}' at ({e.center_x},{e.center_y})"
+                for e in elements
+            )
+            summary = f"Found {len(elements)} interactive elements:\n{element_list}"
+            return {"type": "image_and_text", "base64": img_b64, "text": summary}
 
         elif name == "click_by_index":
-            index = input_data.get("index")
-            if index is None:
-                return {"type": "text", "text": "Missing 'index' parameter"}
-            elements = getattr(_execute_tool_inner, '_last_annotated_elements', None)
-            if not elements:
-                return {"type": "text", "text": "No annotated screenshot available. Call annotated_screenshot first."}
-            match = next((e for e in elements if e["index"] == index), None)
-            if not match:
-                return {"type": "text", "text": f"Element #{index} not found. Valid indices: {[e['index'] for e in elements[:10]]}..."}
-            cx, cy = match["center"]
+            from .annotated_screenshot import get_last_elements
+            idx = input_data.get("index")
             button = input_data.get("button", "left")
-            from .actions import click, double_click, right_click
+            elements = get_last_elements()
+            if not elements:
+                return {"type": "text", "text": "No annotated screenshot taken yet. Use annotated_screenshot first."}
+            target = None
+            for el in elements:
+                if el.index == idx:
+                    target = el
+                    break
+            if not target:
+                return {"type": "text", "text": f"Element #{idx} not found. Valid: 1-{len(elements)}"}
+            x, y = target.center_x, target.center_y
             if button == "double":
-                double_click(cx, cy)
+                double_click(x, y)
             elif button == "right":
-                right_click(cx, cy)
+                right_click(x, y)
             else:
-                click(cx, cy)
-            return {"type": "text", "text": f"Clicked element #{index} ({match['role']}: {match['name']}) at ({cx}, {cy})"}
+                click(x, y)
+            return {"type": "text", "text": f"Clicked [{idx}] '{target.name}' ({target.role}) at ({x},{y})"}
 
         else:
             return {"type": "text", "text": f"Unknown tool: {name}"}
@@ -1385,25 +1384,6 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                             "data": tool_result["base64"],
                         }
                     }],
-                })
-            elif tool_result["type"] == "image_and_text":
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_use.id,
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": tool_result["base64"],
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": tool_result.get("text", ""),
-                        }
-                    ],
                 })
             else:
                 tool_results.append({

@@ -1,305 +1,221 @@
-"""Annotated screenshot - overlay numbered labels on interactive elements.
+"""Annotated screenshot - overlay numbered labels on interactive UI elements.
 
-Takes a screenshot and draws numbered markers on detected interactive UI elements
-(buttons, inputs, links, etc.), making it easy for AI agents to reference elements
-by number instead of guessing coordinates.
-
-Supports both desktop (AT-SPI) and browser (CDP) element sources.
+Takes a screenshot and detects interactive elements via AT-SPI (desktop apps)
+or CDP (browser pages), then draws numbered red labels on each element.
+The agent can then use click_by_index to click any labeled element.
 """
 
 import base64
 import io
-import os
-from dataclasses import dataclass
-from typing import Optional
+import json
+from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw, ImageFont
 
 
 @dataclass
-class AnnotatedElement:
-    """An interactive element with its label number and position."""
+class LabeledElement:
+    """An interactive element with a numeric label."""
     index: int
+    label: str  # display text (e.g., "1: Save")
     role: str
     name: str
     x: int
     y: int
     width: int
     height: int
-    source: str  # "atspi", "cdp", "x11"
-
-    @property
-    def center(self) -> tuple[int, int]:
-        return self.x + self.width // 2, self.y + self.height // 2
+    center_x: int
+    center_y: int
+    source: str  # "atspi" or "cdp"
+    selector: str | None = None  # CSS selector for CDP elements
 
     def to_dict(self) -> dict:
         return {
             "index": self.index,
             "role": self.role,
-            "name": self.name[:80],
-            "center": list(self.center),
-            "bounds": [self.x, self.y, self.width, self.height],
+            "name": self.name,
+            "x": self.x, "y": self.y,
+            "width": self.width, "height": self.height,
+            "center": [self.center_x, self.center_y],
             "source": self.source,
+            "selector": self.selector,
         }
 
 
-# Roles considered interactive
+# Module-level cache for last annotated result
+_last_elements: list[LabeledElement] = []
+
+
+def get_last_elements() -> list[LabeledElement]:
+    """Get the element list from the most recent annotated screenshot."""
+    return _last_elements
+
+
 INTERACTIVE_ROLES = {
     "push button", "toggle button", "radio button", "check box",
-    "menu item", "menu", "combo box", "spin button",
-    "text", "password text", "entry",
-    "link", "tab", "tool bar item", "slider",
-    "page tab", "tree item", "list item",
+    "menu item", "menu", "combo box", "text", "password text",
+    "entry", "link", "tab", "tool bar item", "spin button",
+    "slider", "page tab", "tree item", "list item", "icon",
 }
 
-# Minimum element size to annotate (avoid tiny/invisible elements)
-MIN_SIZE = 8
 
-
-def _get_atspi_elements() -> list[AnnotatedElement]:
-    """Get interactive elements via single AT-SPI tree traversal."""
-    elements = []
+def _collect_atspi_elements() -> list[dict]:
+    """Collect interactive elements from AT-SPI tree."""
     try:
-        import gi
-        gi.require_version('Atspi', '2.0')
-        from gi.repository import Atspi
-
-        desktop = Atspi.get_desktop(0)
-
-        def _walk(node, depth=0):
-            if depth > 8:
-                return
+        from .atspi_helper import find_elements
+        results = []
+        for role in INTERACTIVE_ROLES:
             try:
-                role_name = node.get_role_name() or ""
-                if role_name.lower() in INTERACTIVE_ROLES:
-                    try:
-                        comp = node.get_component_iface()
-                        if comp:
-                            ext = comp.get_extents(Atspi.CoordType.SCREEN)
-                            x, y, w, h = ext.x, ext.y, ext.width, ext.height
-                            if w >= MIN_SIZE and h >= MIN_SIZE and x >= 0 and y >= 0:
-                                name = node.get_name() or ""
-                                # Check visibility via states
-                                state_set = node.get_state_set()
-                                if state_set and (state_set.contains(Atspi.StateType.VISIBLE) or
-                                                  state_set.contains(Atspi.StateType.SHOWING)):
-                                    elements.append(AnnotatedElement(
-                                        index=0, role=role_name, name=name,
-                                        x=x, y=y, width=w, height=h, source="atspi",
-                                    ))
-                    except Exception:
-                        pass
-                count = node.get_child_count()
-                for i in range(count):
-                    child = node.get_child_at_index(i)
-                    if child:
-                        _walk(child, depth + 1)
-            except Exception:
-                pass
-
-        count = desktop.get_child_count()
-        for i in range(count):
-            app = desktop.get_child_at_index(i)
-            if app:
-                _walk(app, 0)
-    except Exception:
-        pass
-    return elements
-
-
-def _get_cdp_elements() -> list[AnnotatedElement]:
-    """Get interactive elements from browser via CDP."""
-    elements = []
-    try:
-        from .cdp_helper import get_or_create_cdp_client
-        cdp = get_or_create_cdp_client()
-        if not cdp or not cdp.is_available():
-            return elements
-
-        # Get all interactive elements with bounding boxes
-        js = """
-        (function() {
-            const selectors = 'a, button, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [onclick], [tabindex]';
-            const els = document.querySelectorAll(selectors);
-            const results = [];
-            for (const el of els) {
-                if (el.offsetParent === null && el.tagName !== 'BODY') continue;
-                const rect = el.getBoundingClientRect();
-                if (rect.width < 8 || rect.height < 8) continue;
-                if (rect.top > window.innerHeight || rect.left > window.innerWidth) continue;
-                if (rect.bottom < 0 || rect.right < 0) continue;
-                const text = (el.textContent || el.value || el.placeholder || el.getAttribute('aria-label') || el.title || '').trim().substring(0, 80);
-                const role = el.getAttribute('role') || el.tagName.toLowerCase();
-                results.push({
-                    role: role,
-                    name: text,
-                    x: Math.round(rect.left),
-                    y: Math.round(rect.top),
-                    w: Math.round(rect.width),
-                    h: Math.round(rect.height),
-                });
-                if (results.length >= 150) break;
-            }
-            return results;
-        })()
-        """
-        result = cdp.evaluate(js)
-        items = result.get("result", {}).get("value", [])
-        if isinstance(items, list):
-            for item in items:
-                elements.append(AnnotatedElement(
-                    index=0,
-                    role=item.get("role", "unknown"),
-                    name=item.get("name", ""),
-                    x=item.get("x", 0),
-                    y=item.get("y", 0),
-                    width=item.get("w", 0),
-                    height=item.get("h", 0),
-                    source="cdp",
-                ))
-    except Exception:
-        pass
-    return elements
-
-
-def _deduplicate(elements: list[AnnotatedElement], threshold: int = 20) -> list[AnnotatedElement]:
-    """Remove near-duplicate elements (same position within threshold pixels)."""
-    unique = []
-    for el in elements:
-        cx, cy = el.center
-        is_dup = False
-        for existing in unique:
-            ex, ey = existing.center
-            if abs(cx - ex) < threshold and abs(cy - ey) < threshold:
-                # Keep the one with more info (longer name or atspi preferred)
-                if len(el.name) > len(existing.name):
-                    unique.remove(existing)
-                    unique.append(el)
-                is_dup = True
-                break
-        if not is_dup:
-            unique.append(el)
-    return unique
-
-
-def _draw_annotations(
-    img: Image.Image,
-    elements: list[AnnotatedElement],
-    label_size: int = 16,
-) -> Image.Image:
-    """Draw numbered labels on the image at element positions."""
-    draw = ImageDraw.Draw(img, 'RGBA')
-    
-    # Try to get a font
-    font = None
-    font_size = max(label_size, 12)
-    for font_path in [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-    ]:
-        if os.path.exists(font_path):
-            try:
-                font = ImageFont.truetype(font_path, font_size)
-                break
+                els = find_elements(role=role)
+                for el in els:
+                    if el.width < 5 or el.height < 5:
+                        continue
+                    if "visible" not in el.states and "showing" not in el.states:
+                        continue
+                    results.append({
+                        "role": el.role,
+                        "name": el.name or "",
+                        "x": el.x, "y": el.y,
+                        "width": el.width, "height": el.height,
+                        "source": "atspi",
+                    })
             except Exception:
                 continue
-    if not font:
-        font = ImageFont.load_default()
+        return results
+    except Exception as e:
+        print(f"[annotated] AT-SPI collection failed: {e}")
+        return []
 
+
+def _collect_cdp_elements() -> list[dict]:
+    """Collect interactive elements from CDP (browser)."""
+    try:
+        from .cdp_helper import get_or_create_cdp_client
+        client = get_or_create_cdp_client()
+        if not client or not client.is_available():
+            return []
+
+        js = """
+        (function() {
+            const sels = 'a, button, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="checkbox"], [role="radio"], [onclick], [tabindex]';
+            const els = document.querySelectorAll(sels);
+            const results = [];
+            for (const el of els) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width < 5 || rect.height < 5) continue;
+                if (rect.bottom < 0 || rect.right < 0) continue;
+                const tag = el.tagName.toLowerCase();
+                const role = el.getAttribute('role') || tag;
+                const name = el.textContent?.trim()?.substring(0, 50) || el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.value || '';
+                let selector = '';
+                if (el.id) selector = '#' + el.id;
+                else if (el.name) selector = tag + '[name="' + el.name + '"]';
+                else selector = tag + ':nth-of-type(' + (Array.from(el.parentNode?.children || []).filter(c => c.tagName === el.tagName).indexOf(el) + 1) + ')';
+                results.push({role, name, x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height), selector, source: 'cdp'});
+            }
+            return JSON.stringify(results.slice(0, 150));
+        })()
+        """
+        resp = client.send_command("Runtime.evaluate", {"expression": js, "returnByValue": True})
+        value = resp.get("result", {}).get("result", {}).get("value", "[]")
+        if isinstance(value, str):
+            return json.loads(value)
+        return value or []
+    except Exception as e:
+        print(f"[annotated] CDP collection failed: {e}")
+        return []
+
+
+def _dedup_elements(elements: list[dict]) -> list[dict]:
+    """Remove duplicate elements that overlap significantly."""
+    seen = []
     for el in elements:
-        cx, cy = el.center
-        label = str(el.index)
-        
-        # Calculate label dimensions
-        bbox = font.getbbox(label)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
-        padding = 3
-        
-        # Position label at top-left of element, offset slightly
-        lx = max(0, el.x - 2)
-        ly = max(0, el.y - th - padding * 2 - 2)
-        
-        # If label would be off-screen top, place it inside
-        if ly < 0:
-            ly = el.y + 2
-        
-        # Draw element highlight rectangle (semi-transparent)
-        draw.rectangle(
-            [el.x, el.y, el.x + el.width, el.y + el.height],
-            outline=(255, 0, 0, 180),
-            width=2,
-        )
-        
-        # Draw label background (red pill)
-        draw.rectangle(
-            [lx, ly, lx + tw + padding * 2, ly + th + padding * 2],
-            fill=(220, 30, 30, 230),
-        )
-        
-        # Draw label text (white)
-        draw.text((lx + padding, ly + padding), label, fill=(255, 255, 255, 255), font=font)
-
-    return img
+        cx = el["x"] + el["width"] // 2
+        cy = el["y"] + el["height"] // 2
+        duplicate = False
+        for s in seen:
+            sx = s["x"] + s["width"] // 2
+            sy = s["y"] + s["height"] // 2
+            if abs(cx - sx) < 10 and abs(cy - sy) < 10:
+                duplicate = True
+                break
+        if not duplicate:
+            seen.append(el)
+    return seen
 
 
-def take_annotated_screenshot(
-    source: str = "auto",
-    max_elements: int = 80,
-) -> tuple[str, list[dict]]:
+def annotated_screenshot(sources: str = "auto") -> tuple[str, list[LabeledElement]]:
     """
-    Take a screenshot with numbered annotations on interactive elements.
-    
+    Take a screenshot and overlay numbered labels on interactive elements.
+
     Args:
-        source: "atspi", "cdp", or "auto" (try both)
-        max_elements: Maximum number of elements to annotate
-        
+        sources: "atspi", "cdp", "both", or "auto" (try both, prefer whichever has results)
+
     Returns:
-        Tuple of (base64_png, element_list) where element_list contains
-        dicts with index, role, name, center, bounds for each annotated element.
+        (base64_png, list_of_labeled_elements)
     """
+    global _last_elements
     from .screenshot import take_screenshot
-    
-    # Get raw screenshot
-    raw_b64 = take_screenshot(scale=False)
-    img = Image.open(io.BytesIO(base64.b64decode(raw_b64)))
-    
+
     # Collect elements
-    elements: list[AnnotatedElement] = []
-    
-    if source in ("auto", "atspi"):
-        elements.extend(_get_atspi_elements())
-    if source in ("auto", "cdp"):
-        elements.extend(_get_cdp_elements())
-    
-    # Deduplicate and limit
-    elements = _deduplicate(elements)
-    
-    # Sort by position (top-to-bottom, left-to-right) for consistent numbering
-    elements.sort(key=lambda e: (e.y // 40, e.x))  # Group by ~40px rows
-    
-    # Assign indices and limit
-    for i, el in enumerate(elements[:max_elements]):
-        el.index = i + 1
-    elements = elements[:max_elements]
-    
-    # Draw annotations
-    annotated_img = _draw_annotations(img, elements)
-    
-    # Scale down for AI processing
-    max_w, max_h = 1366, 768
-    if annotated_img.width > max_w or annotated_img.height > max_h:
-        ratio = min(max_w / annotated_img.width, max_h / annotated_img.height)
-        new_size = (int(annotated_img.width * ratio), int(annotated_img.height * ratio))
-        annotated_img = annotated_img.resize(new_size, Image.LANCZOS)
-    
-    # Encode
+    elements = []
+    if sources in ("atspi", "both", "auto"):
+        elements.extend(_collect_atspi_elements())
+    if sources in ("cdp", "both", "auto"):
+        elements.extend(_collect_cdp_elements())
+
+    elements = _dedup_elements(elements)
+
+    # Take screenshot
+    img_b64 = take_screenshot(scale=False)
+    img = Image.open(io.BytesIO(base64.b64decode(img_b64)))
+    draw = ImageDraw.Draw(img)
+
+    # Try to get a font
+    try:
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
+    except Exception:
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 14)
+        except Exception:
+            font = ImageFont.load_default()
+
+    labeled = []
+    for i, el in enumerate(elements):
+        idx = i + 1
+        x, y, w, h = el["x"], el["y"], el["width"], el["height"]
+        cx, cy = x + w // 2, y + h // 2
+        name = el.get("name", "")
+        short_name = name[:20] if name else el["role"]
+
+        le = LabeledElement(
+            index=idx,
+            label=f"{idx}: {short_name}",
+            role=el["role"],
+            name=name,
+            x=x, y=y, width=w, height=h,
+            center_x=cx, center_y=cy,
+            source=el.get("source", "unknown"),
+            selector=el.get("selector"),
+        )
+        labeled.append(le)
+
+        # Draw red rectangle around element
+        draw.rectangle([x, y, x + w, y + h], outline="red", width=2)
+
+        # Draw label background + text
+        label_text = str(idx)
+        bbox = draw.textbbox((0, 0), label_text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        lx, ly = max(0, x - 2), max(0, y - th - 4)
+        draw.rectangle([lx, ly, lx + tw + 6, ly + th + 4], fill="red")
+        draw.text((lx + 3, ly + 2), label_text, fill="white", font=font)
+
+    _last_elements = labeled
+
+    # Encode result
     buf = io.BytesIO()
-    annotated_img.save(buf, format='PNG', optimize=True)
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    
-    # Build element list
-    element_list = [el.to_dict() for el in elements]
-    
-    return b64, element_list
+    img.save(buf, format="PNG")
+    result_b64 = base64.b64encode(buf.getvalue()).decode()
+
+    return result_b64, labeled

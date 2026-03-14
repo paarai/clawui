@@ -178,3 +178,34 @@ class TestCLI(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAnnotatedScreenshot(unittest.TestCase):
+    """Test annotated screenshot module."""
+
+    def test_import(self):
+        from src.annotated_screenshot import annotated_screenshot, get_last_elements, LabeledElement
+        assert callable(annotated_screenshot)
+        assert callable(get_last_elements)
+
+    def test_dedup_elements(self):
+        from src.annotated_screenshot import _dedup_elements
+        elements = [
+            {"x": 100, "y": 100, "width": 50, "height": 30, "role": "button", "name": "A"},
+            {"x": 102, "y": 101, "width": 50, "height": 30, "role": "button", "name": "A dup"},
+            {"x": 300, "y": 200, "width": 50, "height": 30, "role": "link", "name": "B"},
+        ]
+        result = _dedup_elements(elements)
+        assert len(result) == 2, f"Expected 2, got {len(result)}"
+
+    def test_labeled_element_to_dict(self):
+        from src.annotated_screenshot import LabeledElement
+        el = LabeledElement(
+            index=1, label="1: Save", role="push button", name="Save",
+            x=10, y=20, width=80, height=30, center_x=50, center_y=35,
+            source="atspi", selector=None,
+        )
+        d = el.to_dict()
+        assert d["index"] == 1
+        assert d["center"] == [50, 35]
+        assert d["source"] == "atspi"
