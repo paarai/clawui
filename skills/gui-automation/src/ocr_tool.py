@@ -21,6 +21,80 @@ except ImportError:
     _ocr_engine = None
     _has_rapidocr = False
 
+def _decode_image_bytes(image_data: str) -> bytes:
+    """Decode base64 image payload (supports optional data: URI prefix)."""
+    import base64
+    if image_data.startswith('data:'):
+        _, b64 = image_data.split(',', 1)
+        return base64.b64decode(b64)
+    return base64.b64decode(image_data)
+
+
+def ocr_extract_lines(image_data: str, threshold: float = 0.0) -> List[Dict[str, Any]]:
+    """
+    Extract all OCR lines from screenshot.
+    Returns list: [{text, bbox, center, score}]
+    """
+    lines: List[Dict[str, Any]] = []
+
+    # RapidOCR path
+    if _has_rapidocr and _ocr_engine is not None:
+        try:
+            image_bytes = _decode_image_bytes(image_data)
+            result, _ = _ocr_engine(image_bytes)
+            if result:
+                for box, ocr_text, score in result:
+                    if score < threshold:
+                        continue
+                    xs = [p[0] for p in box]
+                    ys = [p[1] for p in box]
+                    center = [int(sum(xs) / len(xs)), int(sum(ys) / len(ys))]
+                    lines.append({
+                        "text": ocr_text,
+                        "bbox": box,
+                        "center": center,
+                        "score": float(score)
+                    })
+            return lines
+        except Exception as e:
+            print(f"[ocr_extract_lines] RapidOCR failed: {e}")
+
+    # Tesseract fallback
+    try:
+        import subprocess
+        import tempfile
+        image_bytes = _decode_image_bytes(image_data)
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+
+        cmd = ['tesseract', tmp_path, 'stdout', '--psm', '11', 'tsv']
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        os.unlink(tmp_path)
+        if result.returncode != 0:
+            raise RuntimeError(f"Tesseract error: {result.stderr}")
+
+        import csv
+        rows = result.stdout.strip().split('\n')
+        reader = csv.DictReader(rows, delimiter='\t')
+        for row in reader:
+            text = row.get('text', '')
+            if not text:
+                continue
+            x, y = int(row['left']), int(row['top'])
+            w, h = int(row['width']), int(row['height'])
+            lines.append({
+                "text": text,
+                "bbox": [[x, y], [x + w, y], [x + w, y + h], [x, y + h]],
+                "center": [int(x + w / 2), int(y + h / 2)],
+                "score": 0.5
+            })
+        return lines
+    except Exception as e:
+        print(f"[ocr_extract_lines] Tesseract failed: {e}")
+        return []
+
+
 def ocr_find_text(image_data: str, text: str, threshold: float = 0.3) -> List[Dict[str, Any]]:
     """
     Find occurrences of `text` in screenshot via OCR.

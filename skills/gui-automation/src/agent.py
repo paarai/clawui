@@ -229,6 +229,7 @@ def create_tools():
         {"name": "wait_for_text", "description": "Wait until specified text appears on screen using OCR polling. Returns first match coordinates and elapsed time.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to wait for (case-insensitive partial match)"}, "timeout": {"type": "number", "default": 30, "description": "Maximum seconds to wait"}, "poll_interval": {"type": "number", "default": 0.5, "description": "Seconds between OCR polls"}}, "required": ["text"]}},
         # OCR-based click (find text + click in one step)
         {"name": "click_text", "description": "Find text on screen via OCR and click its center. Combines find_text + click in one step. Retries up to 3 times with increasing delay if text not found.", "input_schema": {"type": "object", "properties": {"text": {"type": "string", "description": "Text to find and click (case-insensitive partial match)"}, "button": {"type": "string", "enum": ["left", "right", "double"], "default": "left"}, "index": {"type": "integer", "default": 0, "description": "Which occurrence to click if multiple matches (0=first, -1=last)"}, "timeout": {"type": "number", "default": 5, "description": "Max seconds to retry finding the text"}}, "required": ["text"]}},
+        {"name": "screen_inspect", "description": "Inspect screenshot content via OCR and return detected hints/errors with recommended next actions. Use this before critical clicks if UI seems unresponsive.", "input_schema": {"type": "object", "properties": {"keywords": {"type": "array", "items": {"type": "string"}, "description": "Optional keywords to detect, e.g. ['无 AppID','错误','失败']"}}}},
         # Template-based clicking (fallback when AT-SPI/vision not available)
         {"name": "click_template", "description": "Click on a UI element based on a learned template. Input: app (template name), element (key in template), optional: offset_x/y (pixel offset)", "input_schema": {"type": "object", "properties": {"app": {"type": "string"}, "element": {"type": "string"}}, "optional": ["offset_x", "offset_y"]}},
         # High-level task automation (B)
@@ -976,6 +977,48 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                     last_err = str(e)
                 time.sleep(poll_interval)
             return {"type": "text", "text": f"click_text: '{text}' not found after {timeout}s" + (f" (last error: {last_err})" if last_err else "")}
+
+        elif name == "screen_inspect":
+            # OCR-first screen understanding: detect blocking hints/errors before blind clicking
+            img_data = take_screenshot()
+            if not img_data:
+                return {"type": "text", "text": "screen_inspect: failed to take screenshot"}
+            try:
+                from .ocr_tool import ocr_extract_lines
+                lines = ocr_extract_lines(img_data, threshold=0.2)
+                texts = [str(x.get("text", "")).strip() for x in lines if str(x.get("text", "")).strip()]
+                full_text = "\n".join(texts)
+
+                default_keywords = [
+                    "无 AppID", "无AppID", "测试号", "注册或使用测试号", "错误", "失败", "超时", "重新登录",
+                    "access_token", "not found", "invalid", "权限", "网络"
+                ]
+                keywords = input_data.get("keywords") or default_keywords
+                hits = []
+                for kw in keywords:
+                    if kw and kw in full_text:
+                        hits.append(kw)
+
+                suggestions = []
+                if any(k in hits for k in ["无 AppID", "无AppID"]):
+                    suggestions.append("Detected missing AppID. Click '测试号' or fill valid AppID before creating project.")
+                if any(k in hits for k in ["重新登录", "access_token"]):
+                    suggestions.append("Detected login/session issue. Re-login first, then retry current action.")
+                if any(k in hits for k in ["网络", "超时"]):
+                    suggestions.append("Detected network/timeout hint. Check network and retry with backoff.")
+                if any(k in hits for k in ["错误", "失败"]):
+                    suggestions.append("Detected generic error words. Read nearby OCR lines and branch workflow by error type.")
+
+                return {
+                    "type": "dict",
+                    "hint_hits": hits,
+                    "suggestions": suggestions,
+                    "line_count": len(texts),
+                    "sample_lines": texts[:30],
+                    "text": f"screen_inspect: {len(hits)} hint(s) detected"
+                }
+            except Exception as e:
+                return {"type": "text", "text": f"screen_inspect error: {e}"}
 
         elif name == "click_template":
             app_name = input_data.get("app")
