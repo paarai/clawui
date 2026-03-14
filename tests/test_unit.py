@@ -2,9 +2,12 @@
 """Unit tests for clawui core modules - runnable without a display server."""
 
 import json
+import hashlib
 import os
+import subprocess
 import sys
 import time
+import tempfile
 import unittest
 from unittest.mock import patch, MagicMock, PropertyMock
 
@@ -209,3 +212,123 @@ class TestAnnotatedScreenshot(unittest.TestCase):
         assert d["index"] == 1
         assert d["center"] == [50, 35]
         assert d["source"] == "atspi"
+
+
+class TestAutoVerification(unittest.TestCase):
+    """Test auto action verification logic."""
+
+    @patch('src.agent.take_screenshot')
+    def test_unchanged_screen_adds_warning(self, mock_ss):
+        """When screen hash unchanged after action, result should contain warning."""
+        import src.agent as agent_mod
+        mock_ss.return_value = "AAAA"  # same base64 both times
+        agent_mod._last_screen_hash = hashlib.md5(b"AAAA").hexdigest()
+        with patch.object(agent_mod, '_execute_tool_inner',
+                          return_value={"type": "text", "text": "Clicked"}):
+            with patch.dict(os.environ, {"CLAWUI_VERIFY_ACTIONS": "1"}):
+                result = agent_mod.execute_tool("click", {"x": 100, "y": 200})
+        assert "unchanged" in result.get("text", "").lower()
+
+    @patch('src.agent.take_screenshot')
+    def test_changed_screen_no_warning(self, mock_ss):
+        """When screen changes after action, no warning appended."""
+        import src.agent as agent_mod
+        mock_ss.return_value = "BBBB"  # different from stored
+        agent_mod._last_screen_hash = hashlib.md5(b"AAAA").hexdigest()
+        with patch.object(agent_mod, '_execute_tool_inner',
+                          return_value={"type": "text", "text": "Clicked"}):
+            with patch.dict(os.environ, {"CLAWUI_VERIFY_ACTIONS": "1"}):
+                result = agent_mod.execute_tool("click", {"x": 100, "y": 200})
+        assert "unchanged" not in result.get("text", "").lower()
+
+    @patch('src.agent.take_screenshot')
+    def test_verification_disabled(self, mock_ss):
+        """When CLAWUI_VERIFY_ACTIONS=0, no verification occurs."""
+        import src.agent as agent_mod
+        mock_ss.return_value = "AAAA"
+        agent_mod._last_screen_hash = hashlib.md5(b"AAAA").hexdigest()
+        with patch.object(agent_mod, '_execute_tool_inner',
+                          return_value={"type": "text", "text": "Clicked"}):
+            with patch.dict(os.environ, {"CLAWUI_VERIFY_ACTIONS": "0"}):
+                result = agent_mod.execute_tool("click", {"x": 100, "y": 200})
+        assert "unchanged" not in result.get("text", "")
+        mock_ss.assert_not_called()
+
+    def test_non_action_tool_skips_verification(self):
+        """Non-state-changing tools should not trigger verification."""
+        import src.agent as agent_mod
+        with patch.object(agent_mod, '_execute_tool_inner',
+                          return_value={"type": "text", "text": "tree data"}):
+            result = agent_mod.execute_tool("ui_tree", {})
+        assert "unchanged" not in result.get("text", "")
+
+
+class TestHybridTools(unittest.TestCase):
+    """Test API-GUI hybrid tools."""
+
+    @patch('subprocess.run')
+    def test_run_command(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="hello\n", stderr="")
+        import src.agent as agent_mod
+        agent_mod._last_screen_hash = None  # disable verification
+        result = agent_mod.execute_tool("run_command", {"command": "echo hello"})
+        assert "hello" in result["text"]
+        assert "exit=0" in result["text"]
+
+    @patch('subprocess.run')
+    def test_run_command_timeout(self, mock_run):
+        mock_run.side_effect = subprocess.TimeoutExpired("cmd", 30)
+        import src.agent as agent_mod
+        agent_mod._last_screen_hash = None
+        result = agent_mod.execute_tool("run_command", {"command": "sleep 999"})
+        assert "timed out" in result["text"].lower()
+
+    @patch('subprocess.run')
+    def test_run_command_disabled(self, mock_run):
+        import src.agent as agent_mod
+        agent_mod._last_screen_hash = None
+        with patch.dict(os.environ, {"CLAWUI_ALLOW_SHELL": "0"}):
+            result = agent_mod.execute_tool("run_command", {"command": "echo hello"})
+        assert "disabled" in result["text"].lower()
+        mock_run.assert_not_called()
+
+    def test_file_read_not_found(self):
+        import src.agent as agent_mod
+        agent_mod._last_screen_hash = None
+        result = agent_mod.execute_tool("file_read", {"path": "/nonexistent/file.txt"})
+        assert "not found" in result["text"].lower()
+
+    def test_file_write_and_read(self):
+        import src.agent as agent_mod
+        agent_mod._last_screen_hash = None
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+            path = f.name
+        try:
+            result = agent_mod.execute_tool("file_write", {"path": path, "content": "hello world"})
+            assert "11 bytes" in result["text"]
+            result = agent_mod.execute_tool("file_read", {"path": path})
+            assert result["text"] == "hello world"
+        finally:
+            os.unlink(path)
+
+    def test_file_list_not_found(self):
+        import src.agent as agent_mod
+        agent_mod._last_screen_hash = None
+        result = agent_mod.execute_tool("file_list", {"path": "/nonexistent/dir"})
+        assert "not found" in result["text"].lower()
+
+    def test_file_list_works(self):
+        import src.agent as agent_mod
+        agent_mod._last_screen_hash = None
+        with tempfile.TemporaryDirectory() as td:
+            open(os.path.join(td, "a.txt"), "w").close()
+            open(os.path.join(td, "b.py"), "w").close()
+            result = agent_mod.execute_tool("file_list", {"path": td})
+            assert "a.txt" in result["text"]
+            assert "b.py" in result["text"]
+
+    def test_create_tools_includes_new_tools(self):
+        from src.agent import create_tools
+        names = [t["name"] for t in create_tools()]
+        for tool in ("run_command", "file_read", "file_write", "file_list", "open_url"):
+            assert tool in names, f"{tool} missing from tools"

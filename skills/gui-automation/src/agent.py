@@ -1,5 +1,6 @@
 """Agent loop - AI-driven GUI automation with hybrid AT-SPI + vision."""
 
+import hashlib
 import json
 import re
 import os
@@ -16,6 +17,26 @@ from .actions import (
     click, double_click, right_click, type_text, press_key,
     scroll, drag, focus_window, get_active_window,
 )
+
+
+# --- Auto Action Verification state ---
+_last_screen_hash = None
+_VERIFY_ACTIONS = frozenset({
+    "click", "double_click", "right_click", "type_text", "press_key",
+    "scroll", "drag", "do_action", "set_text", "click_element",
+    "click_by_index", "click_text", "cdp_click", "cdp_type",
+    "cdp_navigate", "cdp_click_at", "cdp_eval",
+    "ff_click", "ff_type", "ff_navigate", "ff_eval", "launch_app",
+})
+
+
+def _quick_screen_hash():
+    """Take a quick screenshot and return its MD5 hash, or None on failure."""
+    try:
+        b64 = take_screenshot(scale=True)
+        return hashlib.md5(b64.encode()).hexdigest()
+    except Exception:
+        return None
 
 
 def _with_retry(func=None, *, env_prefix="CLAWUI", category="RETRY"):
@@ -164,9 +185,17 @@ Strategy:
 3. If AT-SPI doesn't help, take a screenshot and use visual analysis
 4. For browser tasks, use cdp_* tools (navigate, click selectors, type, eval JS)
 5. After each action, verify the result (ui_tree or screenshot or cdp_page_info)
+6. For file/directory/command-line tasks, prefer system tools (run_command, file_read, file_write, file_list) over GUI navigation
+
+System/file tools (direct access, no GUI needed):
+- run_command: Execute a shell command (stdout/stderr returned, 30s timeout)
+- file_read: Read a file's contents (max 100KB)
+- file_write: Write content to a file
+- file_list: List directory contents
+- open_url: Open URL in default browser
 
 Be efficient. Prefer AT-SPI actions over coordinate clicks when available.
-"""
+Prefer system tools over GUI navigation for file and command-line operations."""
 
 
 def create_tools():
@@ -244,12 +273,41 @@ def create_tools():
         # Annotated screenshot + click by index
         {"name": "annotated_screenshot", "description": "Take a screenshot with numbered red labels on all interactive elements. Returns the annotated image + element list. Use click_by_index to click any labeled element.", "input_schema": {"type": "object", "properties": {"sources": {"type": "string", "enum": ["auto", "atspi", "cdp", "both"], "default": "auto", "description": "Element detection source"}}}},
         {"name": "click_by_index", "description": "Click an element by its number from the last annotated_screenshot. Much more reliable than coordinate guessing.", "input_schema": {"type": "object", "properties": {"index": {"type": "integer", "description": "Element number from annotated screenshot"}, "button": {"type": "string", "enum": ["left", "right", "double"], "default": "left"}}, "required": ["index"]}},
+        # API-GUI hybrid tools (direct system access)
+        {"name": "run_command", "description": "Execute a shell command and return stdout/stderr. Timeout 30s, output capped at 10KB.", "input_schema": {"type": "object", "properties": {"command": {"type": "string", "description": "Shell command to execute"}, "timeout": {"type": "number", "default": 30, "description": "Timeout in seconds"}, "cwd": {"type": "string", "description": "Working directory (default: home)"}}, "required": ["command"]}},
+        {"name": "file_read", "description": "Read file contents (text). Max 100KB.", "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute or relative file path"}}, "required": ["path"]}},
+        {"name": "file_write", "description": "Write content to a file. Creates parent directories if needed.", "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "File path to write"}, "content": {"type": "string", "description": "Content to write"}}, "required": ["path", "content"]}},
+        {"name": "file_list", "description": "List directory contents with name, size, and type.", "input_schema": {"type": "object", "properties": {"path": {"type": "string", "description": "Directory path (default: home)"}, "pattern": {"type": "string", "description": "Glob pattern filter (e.g. '*.py')"}}}},
+        {"name": "open_url", "description": "Open a URL in the default browser using xdg-open.", "input_schema": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}},
     ]
 
 
 def execute_tool(name: str, input_data: dict) -> dict:
     """Execute a tool and return result."""
+    global _last_screen_hash
     result = _execute_tool_inner(name, input_data)
+
+    # Update hash when screenshot tools produce images
+    if name in ("screenshot", "cdp_screenshot", "ff_screenshot", "annotated_screenshot"):
+        b64 = result.get("base64")
+        if b64:
+            _last_screen_hash = hashlib.md5(b64.encode()).hexdigest()
+
+    # Auto-verify state-changing actions
+    if (name in _VERIFY_ACTIONS
+            and os.getenv("CLAWUI_VERIFY_ACTIONS", "1") == "1"
+            and _last_screen_hash is not None):
+        _time.sleep(0.15)
+        after_hash = _quick_screen_hash()
+        if after_hash and after_hash == _last_screen_hash:
+            warning = " [WARN: screen unchanged — action may have had no effect]"
+            if "text" in result:
+                result["text"] += warning
+            else:
+                result["verification"] = warning
+        if after_hash:
+            _last_screen_hash = after_hash
+
     # Record action if recording is active (skip meta-tools and screenshots)
     if name not in ("record_start", "record_stop", "replay", "list_recordings", "screenshot"):
         record_action(name, input_data, result)
@@ -1294,6 +1352,72 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             else:
                 click(x, y)
             return {"type": "text", "text": f"Clicked [{idx}] '{target.name}' ({target.role}) at ({x},{y})"}
+
+        # --- API-GUI hybrid tools ---
+        elif name == "run_command":
+            import subprocess as _sp
+            if os.getenv("CLAWUI_ALLOW_SHELL", "1") == "0":
+                return {"type": "text", "text": "Shell commands disabled (CLAWUI_ALLOW_SHELL=0)"}
+            command = input_data.get("command", "")
+            timeout = min(float(input_data.get("timeout", 30)), 120)
+            cwd = input_data.get("cwd") or os.path.expanduser("~")
+            try:
+                r = _sp.run(
+                    command, shell=True, capture_output=True, text=True,
+                    timeout=timeout, cwd=cwd,
+                )
+                out = r.stdout[:10240] or "(empty)"
+                err = r.stderr[:2048]
+                text = f"exit={r.returncode}\n--- stdout ---\n{out}"
+                if err:
+                    text += f"\n--- stderr ---\n{err}"
+                return {"type": "text", "text": text}
+            except _sp.TimeoutExpired:
+                return {"type": "text", "text": f"Command timed out after {timeout}s"}
+
+        elif name == "file_read":
+            path = os.path.expanduser(input_data.get("path", ""))
+            if not os.path.isfile(path):
+                return {"type": "text", "text": f"File not found: {path}"}
+            size = os.path.getsize(path)
+            if size > 102400:
+                return {"type": "text", "text": f"File too large: {size} bytes (max 100KB)"}
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            return {"type": "text", "text": content}
+
+        elif name == "file_write":
+            path = os.path.expanduser(input_data.get("path", ""))
+            content = input_data.get("content", "")
+            parent = os.path.dirname(path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return {"type": "text", "text": f"Written {len(content)} bytes to {path}"}
+
+        elif name == "file_list":
+            import glob as _glob
+            dir_path = os.path.expanduser(input_data.get("path", "~"))
+            pattern = input_data.get("pattern", "*")
+            if not os.path.isdir(dir_path):
+                return {"type": "text", "text": f"Directory not found: {dir_path}"}
+            entries = sorted(_glob.glob(os.path.join(dir_path, pattern)))
+            lines = []
+            for e in entries[:200]:
+                try:
+                    st = os.stat(e)
+                    kind = "dir" if os.path.isdir(e) else "file"
+                    lines.append(f"{kind}  {st.st_size:>10}  {os.path.basename(e)}")
+                except OSError:
+                    lines.append(f"???  {'?':>10}  {os.path.basename(e)}")
+            return {"type": "text", "text": "\n".join(lines) or "(empty directory)"}
+
+        elif name == "open_url":
+            import subprocess as _sp
+            url = input_data.get("url", "")
+            _sp.Popen(["xdg-open", url], stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            return {"type": "text", "text": f"Opened {url} in default browser"}
 
         else:
             return {"type": "text", "text": f"Unknown tool: {name}"}
