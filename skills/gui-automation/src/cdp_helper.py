@@ -433,6 +433,9 @@ class CDPClient:
                     f'if(el)return{{found:true,text:el.innerText||"",tag:el.tagName}};'
                     f'return{{found:false}}}})()'
                 )
+                # Runtime.evaluate usually returns {"result": {"type": ..., "value": ...}}
+                if isinstance(result, dict) and isinstance(result.get("result"), dict):
+                    result = result["result"].get("value", result)
                 if isinstance(result, dict) and result.get('found'):
                     result['elapsed'] = round(elapsed, 2)
                     return result
