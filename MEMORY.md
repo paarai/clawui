@@ -189,3 +189,9 @@
 - 安装 Wine 时触发系统包依赖异常：`nvidia-driver-550` 依赖 `nvidia-dkms-550` 未配置，导致 `apt install wine wine64 wine32` 以 code 100 失败。
 - 结论：当前机器的包管理状态有“半配置”NVIDIA 驱动问题，后续安装新软件前需先 `sudo dpkg --configure -a` / 修复 NVIDIA 依赖链。
 - 微信开发者工具执行失败：通过 Wine 启动 `wechatdevtools.exe` 报错“ShellExecuteEx 失败: 找不到文件”，优先排查 exe 路径/文件完整性，再看 Wine 兼容与依赖。
+
+## 微信开发者工具兼容更新 (2026-03-14)
+- 已确认安装包信息：微信开发者工具 `2.01.2510280`，`version` 文件显示 `latestNw: 0.54.1`（Chromium 91 代）。
+- 已将 Wine 从 `9.0` 升级到 `wine-staging 11.4`，升级动作生效。
+- 兼容现状：在 `--no-sandbox --disable-gpu --disable-gpu-compositing --use-gl=swiftshader` 参数下，工具仍会启动后静默退出（无窗口）。
+- 结论：该问题不是“系统 Chromium 版本低”导致；核心在内嵌 NW.js/Chromium 与 Wine 的兼容性，单纯升级 Wine 不足以完全解决。
