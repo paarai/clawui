@@ -4,6 +4,7 @@
 import os
 import sys
 import time
+import tempfile
 
 # Add parent dir to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -145,6 +146,26 @@ def test_ocr_import():
 def test_recorder_import():
     from src.recorder import Recorder, Player
 
+
+def test_export_recording_to_script():
+    from src.recorder import export_to_script
+
+    with tempfile.TemporaryDirectory() as td:
+        recording_path = os.path.join(td, "demo.json")
+        output_path = os.path.join(td, "demo.py")
+        with open(recording_path, "w") as f:
+            f.write(
+                '{"metadata":{"count":2},"actions":[{"tool":"click","input":{"x":10,"y":20}},{"tool":"type_text","input":{"text":"hello"}}]}'
+            )
+
+        out = export_to_script(recording_path, output=output_path, delay=0.1)
+        assert out == output_path
+        assert os.path.exists(output_path), "Exported script does not exist"
+
+        script = open(output_path, "r").read()
+        assert "from clawui.actions import click" in script
+        assert "click(10, 20)" in script
+        assert "type_text('hello')" in script
 
 
 # === AT-SPI Backend (requires desktop session) ===

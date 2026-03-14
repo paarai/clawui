@@ -14,6 +14,7 @@ Usage examples:
     clawui inspect --app Firefox --ocr --save screen.png
     clawui record demo
     clawui replay recordings/demo.json
+    clawui export recordings/demo.json -o demo.py
     clawui browser https://example.com
     clawui type "hello"
     clawui key "ctrl+c"
@@ -25,7 +26,7 @@ import os
 import subprocess
 import sys
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 
 
 def _import_error(module_name: str, exc: Exception) -> int:
@@ -348,6 +349,11 @@ def main():
     replay_p.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier")
     replay_p.add_argument("--dry-run", action="store_true", help="Preview without executing")
 
+    export_p = subparsers.add_parser("export", help="Export recording JSON to standalone Python script")
+    export_p.add_argument("file", help="Path to recording JSON file")
+    export_p.add_argument("-o", "--output", help="Output Python script path (default: same name with .py)")
+    export_p.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier for generated sleep delays")
+
     # Browser
     browser_p = subparsers.add_parser("browser", help="Navigate Chromium/Chrome to URL via CDP")
     browser_p.add_argument("url", help="URL to open")
@@ -536,6 +542,23 @@ def main():
             return 0
         except Exception as e:
             return _runtime_error("replay", e)
+
+    elif args.command == "export":
+        try:
+            from .recorder import export_to_script
+        except ImportError as e:
+            return _import_error("recorder", e)
+        try:
+            if not os.path.exists(args.file):
+                print(f"Recording file not found: {args.file}", file=sys.stderr)
+                return 1
+            speed = args.speed if args.speed > 0 else 1.0
+            delay = 0.5 / speed
+            out = export_to_script(args.file, output=args.output, delay=delay)
+            print(f"Export complete: {out}")
+            return 0
+        except Exception as e:
+            return _runtime_error("export", e)
 
     elif args.command == "browser":
         try:
