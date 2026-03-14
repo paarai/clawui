@@ -4,6 +4,28 @@ import gi
 gi.require_version('Atspi', '2.0')
 from gi.repository import Atspi
 from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+import functools
+
+# Default timeout for AT-SPI tree walks (seconds)
+ATSPI_TIMEOUT = int(__import__('os').environ.get('CLAWUI_ATSPI_TIMEOUT', '10'))
+
+_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="atspi")
+
+
+def with_timeout(timeout_seconds=None):
+    """Decorator: run AT-SPI function in a thread with timeout to prevent hangs."""
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            t = timeout_seconds if timeout_seconds is not None else ATSPI_TIMEOUT
+            future = _executor.submit(fn, *args, **kwargs)
+            try:
+                return future.result(timeout=t)
+            except FuturesTimeoutError:
+                raise TimeoutError(f"{fn.__name__} timed out after {t}s")
+        return wrapper
+    return decorator
 
 
 @dataclass
@@ -114,6 +136,7 @@ def get_app_windows(app_name: str) -> list[UIElement]:
     return windows
 
 
+@with_timeout()
 def find_elements(
     root=None,
     role: str | None = None,
@@ -196,6 +219,7 @@ def set_text(element: UIElement, text: str) -> bool:
         return False
 
 
+@with_timeout()
 def get_focused_element() -> UIElement | None:
     """Get the currently focused UI element."""
     desktop = Atspi.get_desktop(0)
@@ -231,6 +255,7 @@ def _find_focused(node, depth, max_depth):
     return None
 
 
+@with_timeout()
 def get_ui_tree_summary(app_name: str | None = None, max_depth: int = 5) -> str:
     """
     Get a text summary of the UI tree for AI consumption.

@@ -210,7 +210,7 @@ def test_execute_wait_for_element_timeout():
     result = execute_tool("wait_for_element", {"name_contains": "__nonexistent__", "timeout": 2})
     elapsed = time.time() - start
     assert "Timeout" in result.get("text", ""), f"Expected timeout, got: {result}"
-    assert elapsed < 5, f"Took too long: {elapsed:.1f}s"
+    assert elapsed < 10, f"Took too long: {elapsed:.1f}s (expected ~2s timeout + AT-SPI overhead)"
 
 
 

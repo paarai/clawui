@@ -259,7 +259,10 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             return {"type": "image", "base64": img}
 
         elif name == "ui_tree":
-            tree = get_ui_tree_summary(app_name=input_data.get("app_name"), max_depth=5)
+            try:
+                tree = get_ui_tree_summary(app_name=input_data.get("app_name"), max_depth=5)
+            except TimeoutError:
+                tree = "(AT-SPI tree walk timed out — app may be unresponsive)"
             return {"type": "text", "text": tree or "(empty UI tree)"}
 
         elif name == "find_element":
