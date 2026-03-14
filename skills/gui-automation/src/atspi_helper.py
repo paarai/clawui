@@ -6,6 +6,11 @@ from gi.repository import Atspi
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import functools
+import warnings
+
+# Suppress known AT-SPI deprecation warnings (no replacement API available in Atspi 2.0)
+warnings.filterwarnings("ignore", message=".*Atspi\\.Action\\.get_action_name is deprecated.*")
+warnings.filterwarnings("ignore", message=".*Atspi\\.Accessible\\.get_text is deprecated.*")
 
 # Default timeout for AT-SPI tree walks (seconds)
 ATSPI_TIMEOUT = int(__import__('os').environ.get('CLAWUI_ATSPI_TIMEOUT', '10'))
@@ -141,6 +146,7 @@ def find_elements(
     root=None,
     role: str | None = None,
     name: str | None = None,
+    app_name: str | None = None,
     max_depth: int = 10,
     visible_only: bool = True,
 ) -> list[UIElement]:
@@ -151,10 +157,20 @@ def find_elements(
         root: Starting node (None = desktop)
         role: Filter by role (e.g., 'push button', 'text', 'menu item')
         name: Filter by name (substring match, case-insensitive)
+        app_name: Filter by application name (substring match, case-insensitive)
         max_depth: Maximum tree depth to search
         visible_only: Only return visible elements
     """
     if root is None:
+        if app_name:
+            # Scope search to matching application(s)
+            desktop = Atspi.get_desktop(0)
+            results = []
+            for i in range(desktop.get_child_count()):
+                app = desktop.get_child_at_index(i)
+                if app and app_name.lower() in (app.get_name() or "").lower():
+                    _search(app, role, name, max_depth, 0, visible_only, results)
+            return results
         root = Atspi.get_desktop(0)
 
     results = []

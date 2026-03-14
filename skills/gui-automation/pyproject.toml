@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clawui"
-version = "0.5.0"
+version = "0.6.0"
 description = "AI-driven desktop and browser automation for Linux"
 readme = "README.md"
 license = {text = "MIT"}
@@ -43,6 +43,12 @@ clawui = "src.cli:main"
 [project.urls]
 Homepage = "https://github.com/longgo1001/clawui"
 Issues = "https://github.com/longgo1001/clawui/issues"
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore::DeprecationWarning:gi.overrides",
+    "ignore:.*Atspi.*is deprecated:DeprecationWarning",
+]
 
 [tool.setuptools.packages.find]
 include = ["src*"]

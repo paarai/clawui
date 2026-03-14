@@ -27,7 +27,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 
 
 def _import_error(module_name: str, exc: Exception) -> int:
