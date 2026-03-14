@@ -4,6 +4,8 @@ import json
 import re
 import os
 import sys
+import time as _time
+from functools import wraps
 
 from .screenshot import take_screenshot, get_screen_size
 from .atspi_helper import (
@@ -14,6 +16,42 @@ from .actions import (
     click, double_click, right_click, type_text, press_key,
     scroll, drag, focus_window, get_active_window,
 )
+
+
+def _with_retry(func=None, *, env_prefix="CLAWUI", category="RETRY"):
+    """Decorator that adds configurable retry logic to tool functions.
+    
+    Reads max attempts and initial delay from env vars:
+      {env_prefix}_{category}_MAX (default 3)
+      {env_prefix}_{category}_DELAY (default 0.5 for general, 1.0 for CDP/Marionette/Vision)
+    
+    The decorated function should raise on failure. On final failure,
+    returns {"type": "text", "text": "..."} with error details.
+    """
+    default_delay = 1.0 if category in ("CDP_RETRY", "MARIONETTE_RETRY", "VISION_RETRY") else 0.5
+    
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            max_attempts = int(os.getenv(f'{env_prefix}_{category}_MAX', '3'))
+            delay = float(os.getenv(f'{env_prefix}_{category}_DELAY', str(default_delay)))
+            last_err = None
+            for attempt in range(max_attempts):
+                try:
+                    return fn(*args, **kwargs)
+                except Exception as e:
+                    last_err = e
+                    if attempt < max_attempts - 1:
+                        print(f"[WARN] {fn.__name__}: {e} (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...", file=sys.stderr)
+                        _time.sleep(delay)
+                        delay *= 2
+                    else:
+                        return {"type": "text", "text": f"{fn.__name__} failed after {max_attempts} attempts: {last_err}"}
+        return wrapper
+    
+    if func is not None:
+        return decorator(func)
+    return decorator
 from .backends import get_backend
 from .recorder import start_recording, stop_recording, record_action, play_recording
 from .github_integration import create_github_repo
@@ -904,8 +942,8 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             cdp = _get_cdp()
             if not cdp:
                 return {"type": "text", "text": "CDP not available"}
-            selector = inp.get("selector", "")
-            timeout = inp.get("timeout", 15)
+            selector = input_data.get("selector", "")
+            timeout = input_data.get("timeout", 15)
             result = cdp.client.wait_for_selector(selector, timeout=timeout)
             return {"type": "text", "text": json.dumps(result)}
 
@@ -914,9 +952,9 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
             if not cdp:
                 return {"type": "text", "text": "CDP not available"}
             result = cdp.client.wait_for_navigation(
-                url_contains=inp.get("url_contains"),
-                title_contains=inp.get("title_contains"),
-                timeout=inp.get("timeout", 15)
+                url_contains=input_data.get("url_contains"),
+                title_contains=input_data.get("title_contains"),
+                timeout=input_data.get("timeout", 15)
             )
             return {"type": "text", "text": json.dumps(result)}
 
