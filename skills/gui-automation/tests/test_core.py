@@ -82,6 +82,36 @@ def test_cdp_wait_for_selector_result_parsing():
     assert r.get("text") == "Submit", f"Expected text='Submit', got {r}"
 
 
+def test_cdp_wait_for_load_ready_state_nested_result():
+    """CDPBackend.wait_for_load should handle nested Runtime.evaluate payloads."""
+    from src.cdp_backend import CDPBackend
+
+    backend = CDPBackend.__new__(CDPBackend)
+    backend._ensure_connection = lambda: None
+
+    class DummyClient:
+        def evaluate(self, _expr):
+            return {"result": {"value": "complete"}}
+
+    backend.client = DummyClient()
+    assert backend.wait_for_load(timeout=0.2, poll_interval=0.01) is True
+
+
+def test_cdp_wait_for_load_timeout_returns_false():
+    """CDPBackend.wait_for_load should return False on timeout when page never completes."""
+    from src.cdp_backend import CDPBackend
+
+    backend = CDPBackend.__new__(CDPBackend)
+    backend._ensure_connection = lambda: None
+
+    class DummyClient:
+        def evaluate(self, _expr):
+            return {"result": {"value": "loading"}}
+
+    backend.client = DummyClient()
+    assert backend.wait_for_load(timeout=0.05, poll_interval=0.01) is False
+
+
 def test_marionette_import():
     from src.marionette_helper import MarionetteClient
 
@@ -241,6 +271,8 @@ if __name__ == "__main__":
     run_test("X11 import", test_x11_import)
     run_test("CDP import", test_cdp_import)
     run_test("CDP wait_for_selector result parsing", test_cdp_wait_for_selector_result_parsing)
+    run_test("CDP wait_for_load nested result", test_cdp_wait_for_load_ready_state_nested_result)
+    run_test("CDP wait_for_load timeout", test_cdp_wait_for_load_timeout_returns_false)
     run_test("Marionette import", test_marionette_import)
     run_test("Perception import", test_perception_import)
     run_test("OCR import", test_ocr_import)

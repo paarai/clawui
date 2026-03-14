@@ -117,8 +117,31 @@ class CDPBackend:
             "title": self.client.get_page_title()
         }
 
-    def wait_for_load(self, timeout: float = 10.0):
-        """Wait for page to load (simple polling)."""
+    def wait_for_load(self, timeout: float = 10.0, poll_interval: float = 0.2):
+        """Wait until document.readyState is complete or timeout is reached."""
         self._ensure_connection()
-        time.sleep(2)  # Basic wait; could improve with readyState check
-        return True
+
+        start = time.time()
+        while (time.time() - start) < timeout:
+            try:
+                result = self.client.evaluate("document.readyState")
+                ready_state = ""
+
+                # CDP evaluate may return either a raw value or nested {'result': {'value': ...}}
+                if isinstance(result, dict):
+                    if "result" in result and isinstance(result["result"], dict):
+                        ready_state = str(result["result"].get("value", ""))
+                    else:
+                        ready_state = str(result.get("value", ""))
+                elif isinstance(result, str):
+                    ready_state = result
+
+                if ready_state == "complete":
+                    return True
+            except Exception:
+                # transient CDP errors during navigation are expected
+                pass
+
+            time.sleep(poll_interval)
+
+        return False
