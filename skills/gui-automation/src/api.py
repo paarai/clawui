@@ -182,20 +182,96 @@ def press_key(key: str):
     _press(key)
 
 
-def scroll(direction: str = "down", clicks: int = 3):
+def right_click(
+    text: Optional[str] = None,
+    coords: Optional[tuple[int, int]] = None,
+):
+    """Right-click a UI element by text label or screen coordinates."""
+    from .actions import right_click as _rclick, click as _click
+
+    if coords:
+        _rclick(x=coords[0], y=coords[1])
+    elif text:
+        elems = find_elements(name=text)
+        if not elems:
+            raise RuntimeError(f"No element found with text '{text}'")
+        cx, cy = elems[0].center
+        _rclick(x=cx, y=cy)
+    else:
+        _rclick()
+
+
+def drag(start: tuple[int, int], end: tuple[int, int]):
+    """Drag from start (x, y) to end (x, y) coordinates.
+
+    Args:
+        start: (x, y) starting position.
+        end: (x, y) ending position.
+    """
+    from .actions import drag as _drag
+    _drag(start[0], start[1], end[0], end[1])
+
+
+def scroll(direction: str = "down", clicks: int = 3, coords: Optional[tuple[int, int]] = None):
     """Scroll the screen.
 
     Args:
         direction: 'up' or 'down'.
         clicks: Number of scroll clicks.
+        coords: Optional (x, y) position to scroll at.
     """
     from .actions import scroll as _scroll
-    _scroll(direction, clicks)
+    _scroll(direction, clicks, x=coords[0] if coords else None, y=coords[1] if coords else None)
+
 
 def move_mouse(x: int, y: int):
     """Move the mouse cursor to screen coordinates."""
     from .actions import mouse_move
     mouse_move(x, y)
+
+
+def hotkey(*keys: str):
+    """Press a hotkey combination (e.g. hotkey('ctrl', 's')).
+
+    Args:
+        *keys: Key names to press together.
+    """
+    from .actions import hotkey as _hotkey
+    _hotkey(*keys)
+
+
+# ---------------------------------------------------------------------------
+# Desktop: Window Management
+# ---------------------------------------------------------------------------
+
+def focus_window(name: Optional[str] = None, window_id: Optional[int] = None):
+    """Focus a window by name or X11 window ID."""
+    from .actions import focus_window as _focus
+    _focus(name=name, window_id=window_id)
+
+
+def active_window() -> dict:
+    """Get info about the currently active window. Returns {id, name}."""
+    from .actions import get_active_window
+    return get_active_window()
+
+
+def minimize():
+    """Minimize the active window."""
+    from .actions import minimize_window
+    minimize_window()
+
+
+def maximize():
+    """Maximize the active window."""
+    from .actions import maximize_window
+    maximize_window()
+
+
+def close():
+    """Close the active window (Alt+F4)."""
+    from .actions import close_window
+    close_window()
 
 
 # ---------------------------------------------------------------------------

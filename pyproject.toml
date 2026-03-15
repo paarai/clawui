@@ -52,3 +52,6 @@ filterwarnings = [
 
 [tool.setuptools.packages.find]
 include = ["src*"]
+
+[tool.setuptools.package-data]
+src = ["py.typed"]

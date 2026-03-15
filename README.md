@@ -61,20 +61,33 @@ clawui replay my_flow.json
 ### Python
 
 ```python
-from src.perception import list_applications, find_elements, get_ui_tree_summary
-from src.actions import click, type_text, press_key
-from src.cdp_helper import CDPHelper
+from clawui.api import (
+    apps, tree, find_elements,
+    click, right_click, drag, type_text, press_key, hotkey,
+    browser, screenshot, wait_for_element, wait_for_text,
+)
 
 # Desktop apps
-apps = list_applications()
-buttons = find_elements(app_name="Calculator", role="push button")
+print(apps())
+print(tree(max_depth=2))
+buttons = find_elements(role="push button", name="OK")
+
+# Mouse + keyboard actions
+click(text="OK")
+right_click(coords=(500, 300))
+drag(start=(100, 200), end=(400, 200))
+type_text("hello")
+press_key("Return")
+hotkey("ctrl", "s")
 
 # Browser automation (Chromium via CDP)
-cdp = CDPHelper()
-cdp.navigate("https://example.com")
-cdp.click_element("#submit-btn")
-cdp.type_text("#search", "hello")
+browser.connect(port=9222)
+browser.navigate("https://example.com")
+browser.click_selector("a")
+browser.screenshot(save_to="browser.png")
 ```
+
+More runnable examples are in [`examples/`](examples/): desktop basics, browser automation, wait/verify flow, and drag/window management.
 
 ### AI Agent
 
