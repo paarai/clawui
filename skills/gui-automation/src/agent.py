@@ -32,7 +32,7 @@ _VERIFY_ACTIONS = frozenset({
 
 # --- P3-A: Context window compression ---
 _CONTEXT_MAX_TOKENS = int(os.getenv("CLAWUI_CONTEXT_MAX_TOKENS", "80000"))
-_CONTEXT_COMPRESS_RATIO = 0.7
+_CONTEXT_COMPRESS_RATIO = 0.6
 _CONTEXT_KEEP_RECENT = 6
 
 # --- P3-B: Dynamic model routing ---
