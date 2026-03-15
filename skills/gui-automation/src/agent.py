@@ -33,7 +33,7 @@ _VERIFY_ACTIONS = frozenset({
 
 # --- P3-A: Context window compression ---
 _CONTEXT_MAX_TOKENS = int(os.getenv("CLAWUI_CONTEXT_MAX_TOKENS", "80000"))
-_CONTEXT_COMPRESS_RATIO = 0.7
+_CONTEXT_COMPRESS_RATIO = 0.6
 _CONTEXT_KEEP_RECENT = 6
 
 # --- P3-B: Dynamic model routing ---
@@ -63,7 +63,7 @@ _COMMAND_BLOCKLIST_BUILTINS = [
     r"\bwget\b.*\|\s*(ba)?sh",     # wget pipe to shell
     r">\s*/dev/sd[a-z]",           # write to block device
     r"\bchmod\b.*777\s+/",         # chmod 777 on root paths
-    r"\b:()\s*\{\s*:\|:\s*&\s*\}", # fork bomb
+    r":\s*\(\)\s*\{\s*:\|:\s*&\s*\}", # fork bomb
     r"\bshutdown\b",
     r"\breboot\b",
     r"\binit\s+[06]\b",

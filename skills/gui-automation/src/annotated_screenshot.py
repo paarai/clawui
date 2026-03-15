@@ -12,6 +12,12 @@ from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw, ImageFont
 
+# Expose OCR function at module level for easier monkeypatching in tests.
+try:
+    from .ocr_tool import ocr_extract_lines
+except Exception:  # pragma: no cover
+    ocr_extract_lines = None
+
 
 @dataclass
 class LabeledElement:
@@ -178,9 +184,7 @@ def _ocr_cross_validate(elements, img_b64):
       - Spatial overlap with OCR bboxes (up to +0.3)
       - Name match with OCR text (up to +0.2)
     """
-    try:
-        from .ocr_tool import ocr_extract_lines
-    except ImportError:
+    if ocr_extract_lines is None:
         return elements  # OCR not available, return unchanged
 
     try:
