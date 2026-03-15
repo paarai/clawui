@@ -587,6 +587,7 @@ def main():
     run_p.add_argument("task", help="Task description in natural language")
     run_p.add_argument("--model", default="claude-sonnet-4-20250514", help="AI model to use")
     run_p.add_argument("--max-steps", type=int, default=30, help="Maximum agent steps")
+    run_p.add_argument("--timeout", type=float, default=None, help="Wall-clock timeout in seconds (default: no limit)")
     run_p.add_argument("--log", help="Write structured JSON run log to file (for debugging/replay analysis)")
 
     # List apps
@@ -707,7 +708,8 @@ def main():
             return _import_error("agent", e)
         try:
             result = run_agent(args.task, max_steps=args.max_steps, model=args.model,
-                               log_file=getattr(args, 'log', None))
+                               log_file=getattr(args, 'log', None),
+                               timeout=getattr(args, 'timeout', None))
             print(f"\nResult: {result}")
             return 0
         except Exception as e:

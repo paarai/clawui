@@ -105,3 +105,12 @@ def test_annotated_screenshot_dedup():
     ]
     result = _dedup_elements(elements)
     assert len(result) == 2  # duplicate removed
+
+
+def test_run_agent_timeout_signature():
+    """run_agent should accept a timeout parameter."""
+    import inspect
+    from clawui.agent import run_agent
+    sig = inspect.signature(run_agent)
+    assert "timeout" in sig.parameters, "run_agent must accept 'timeout' parameter"
+    assert sig.parameters["timeout"].default is None, "timeout default should be None"

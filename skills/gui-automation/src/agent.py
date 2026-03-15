@@ -1978,7 +1978,7 @@ def _format_tool_result(tool_use, tool_result):
 
 
 def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-20250514",
-              log_file: str = None):
+              log_file: str = None, timeout: float = None):
     """
     Run the GUI automation agent for a given task.
 
@@ -1987,10 +1987,12 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
         max_steps: Maximum number of tool-use steps
         model: AI model to use
         log_file: Optional path to write structured JSON run log
+        timeout: Wall-clock timeout in seconds (None = no limit)
     """
     import datetime
     reset_token_stats()  # P3-F: Reset stats at start
-    logger.info("Starting agent task model=%s max_steps=%s", model, max_steps)
+    deadline = (_time.time() + timeout) if timeout else None
+    logger.info("Starting agent task model=%s max_steps=%s timeout=%s", model, max_steps, timeout)
     backend = get_backend(model)
     tools = create_tools()
 
@@ -2027,6 +2029,15 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
             logger.warning("Failed to write run log: %s", e)
 
     for step in range(max_steps):
+        # Wall-clock timeout check
+        if deadline and _time.time() >= deadline:
+            logger.warning("Wall-clock timeout reached (%.0fs)", timeout)
+            print(f"\n⏰ Wall-clock timeout reached ({timeout}s).")
+            run_log["status"] = "timeout"
+            run_log["result"] = f"Wall-clock timeout after {timeout}s at step {step + 1}"
+            _save_log()
+            return run_log["result"]
+
         logger.info("Agent step %s/%s", step + 1, max_steps)
         logger.info("--- Step %d/%d ---", step + 1, max_steps)
 
