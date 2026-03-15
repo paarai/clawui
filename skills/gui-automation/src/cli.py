@@ -683,7 +683,22 @@ def main():
     # Version
     subparsers.add_parser("version", help="Show version")
 
+    # Global logging flags (apply before subcommand-specific flags)
+    parser.add_argument("--log-level", choices=["debug", "info", "warning", "error"],
+                        help="Set logging verbosity (also via CLAWUI_LOG_LEVEL env var)")
+
     args = parser.parse_args()
+
+    # Configure logging
+    import logging as _logging
+    env_level = os.environ.get("CLAWUI_LOG_LEVEL", "").upper()
+    if args.log_level:
+        level = getattr(_logging, args.log_level.upper())
+    elif env_level in ("DEBUG", "INFO", "WARNING", "ERROR"):
+        level = getattr(_logging, env_level)
+    else:
+        level = _logging.WARNING
+    _logging.basicConfig(format="%(name)s %(levelname)s: %(message)s", level=level)
 
     if args.command == "run":
         try:

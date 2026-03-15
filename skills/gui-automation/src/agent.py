@@ -322,7 +322,6 @@ def _with_retry(func=None, *, env_prefix="CLAWUI", category="RETRY"):
                     last_err = e
                     if attempt < max_attempts - 1:
                         logger.warning("%s failed: %s (attempt %s/%s), retrying in %.1fs", fn.__name__, e, attempt+1, max_attempts, delay)
-                        print(f"[WARN] {fn.__name__}: {e} (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...", file=sys.stderr)
                         _time.sleep(delay)
                         delay *= 2
                     else:
@@ -353,7 +352,6 @@ def _get_cdp():
             return _cdp_client
     except Exception as e:
         logger.warning("CDP auto-launch failed: %s", e)
-        print(f"[WARN] CDP auto-launch failed: {e}", file=sys.stderr)
     return None
 
 def _vision_find(description: str) -> tuple | None:
@@ -363,7 +361,6 @@ def _vision_find(description: str) -> tuple | None:
         img = take_screenshot()
         if not img:
             logger.warning("Vision fallback screenshot failed")
-            print("[WARN] Vision fallback: screenshot failed")
             return None
         vb = VisionBackend()
         prompt = f"Locate the UI element that matches: '{description}'. Return JSON with x, y (center coordinates), and confidence (0-1)."
@@ -385,10 +382,8 @@ def _vision_find(description: str) -> tuple | None:
                 return (int(x), int(y), float(conf))
         else:
             logger.warning("Vision fallback returned no JSON: %s", text[:100])
-            print(f"[WARN] Vision fallback: no JSON in response: {text[:100]}")
     except Exception as e:
         logger.error("Vision fallback error: %s", e)
-        print(f"[WARN] Vision fallback error: {e}")
     return None
 
 def _scroll_and_find(find_fn, max_scrolls=None, direction="down", pause=None):
@@ -452,7 +447,6 @@ def _grounding_cascade(description, methods=None):
                     return (result[0], result[1], result[2], "vision")
 
         except Exception as e:
-            print(f"[WARN] Grounding cascade ({method}): {e}", file=sys.stderr)
             continue
 
     return None
@@ -730,7 +724,6 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                         return {"type": "text", "text": text}
                     if attempt < max_attempts - 1:
                         logger.warning("find_element: no elements (attempt %s/%s), retrying in %.1fs", attempt+1, max_attempts, delay)
-                        print(f"[WARN] find_element: no elements (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -738,7 +731,6 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 except Exception as e:
                     if attempt < max_attempts - 1:
                         logger.warning("find_element error: %s (attempt %s/%s), retrying in %.1fs", e, attempt+1, max_attempts, delay)
-                        print(f"[WARN] find_element error: {e} (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -1174,7 +1166,6 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                     # No valid coordinates produced - retry if possible
                     if attempt < max_attempts - 1:
                         logger.warning("vision_find_element: no coordinates (attempt %s/%s), retrying in %.1fs", attempt+1, max_attempts, delay)
-                        print(f"[WARN] vision_find_element: no coordinates (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -1182,7 +1173,6 @@ def _execute_tool_inner(name: str, input_data: dict) -> dict:
                 except Exception as e:
                     if attempt < max_attempts - 1:
                         logger.warning("vision_find_element error: %s (attempt %s/%s), retrying in %.1fs", e, attempt+1, max_attempts, delay)
-                        print(f"[WARN] vision_find_element error: {e} (attempt {attempt+1}/{max_attempts}), retrying in {delay:.1f}s...")
                         time.sleep(delay)
                         delay *= 2
                         continue
@@ -2035,11 +2025,10 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                 json.dump(run_log, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.warning("Failed to write run log: %s", e)
-            print(f"[WARN] Failed to write run log: {e}", file=sys.stderr)
 
     for step in range(max_steps):
         logger.info("Agent step %s/%s", step + 1, max_steps)
-        print(f"\n--- Step {step + 1}/{max_steps} ---")
+        logger.info("--- Step %d/%d ---", step + 1, max_steps)
 
         # P3-A: Compress history before LLM call
         messages = _compress_history(messages)
@@ -2054,7 +2043,7 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
         except Exception as e:
             consecutive_errors += 1
             logger.error("Backend error: %s", e)
-            print(f"Backend error: {e}")
+            logger.error("Backend error: %s", e)
             run_log["steps"].append({"step": step + 1, "error": str(e), "type": "backend_error"})
             if consecutive_errors >= 3:
                 run_log["status"] = "error"
@@ -2080,11 +2069,11 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
         for block in response["raw_content"]:
             if block.type == "text":
                 logger.debug("Assistant text block received (%d chars)", len(block.text or ""))
-                print(f"Agent: {block.text}")
+                logger.info("Agent: %s", block.text)
                 assistant_content.append({"type": "text", "text": block.text})
             elif block.type == "tool_use":
                 logger.info("Tool requested: %s", block.name)
-                print(f"Tool: {block.name}({json.dumps(block.input, ensure_ascii=False)[:100]})")
+                logger.info("Tool: %s(%s)", block.name, json.dumps(block.input, ensure_ascii=False)[:100])
                 assistant_content.append({
                     "type": "tool_use",
                     "id": block.id,
@@ -2097,7 +2086,7 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
 
         if not tool_uses:
             logger.info("Agent finished with no further tool calls")
-            print("Agent finished (no more tool calls).")
+            logger.info("Agent finished (no more tool calls).")
             # Log final text from assistant
             for block in response["raw_content"]:
                 if block.type == "text":
@@ -2155,12 +2144,12 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
     # P3-F: Print per-tool token breakdown
     stats = get_token_stats()
     if stats["tools"]:
-        print("\n--- Token Usage Breakdown ---")
+        logger.info("--- Token Usage Breakdown ---")
         for tname, tdata in sorted(stats["tools"].items()):
-            print(f"  {tname}: {tdata['input_tokens']}in + {tdata['output_tokens']}out ({tdata['calls']} calls)")
+            logger.info("  %s: %din + %dout (%d calls)", tname, tdata["input_tokens"], tdata["output_tokens"], tdata["calls"])
     if stats["phases"]:
         for pname, pdata in sorted(stats["phases"].items()):
-            print(f"  [{pname}]: {pdata['input_tokens']}in + {pdata['output_tokens']}out ({pdata['calls']} calls)")
+            logger.info("  [%s]: %din + %dout (%d calls)", pname, pdata["input_tokens"], pdata["output_tokens"], pdata["calls"])
 
     _save_log()
 

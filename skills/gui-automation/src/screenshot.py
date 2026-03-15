@@ -3,6 +3,10 @@
 Supports X11 (scrot) and Wayland (GNOME D-Bus portal / grim).
 """
 
+import logging
+
+logger = logging.getLogger("clawui.screenshot")
+
 import base64
 import json
 import os
