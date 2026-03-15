@@ -334,6 +334,169 @@ def _run_wait(args) -> int:
     return 1
 
 
+def _run_selftest(args) -> int:
+    """Run end-to-end self-test validating the full automation pipeline."""
+    import tempfile
+    import shutil
+
+    print(f"ClawUI Self-Test v{VERSION}")
+    print("=" * 50)
+
+    passed = 0
+    failed = 0
+    total = 0
+    tmpdir = tempfile.mkdtemp(prefix="clawui_selftest_")
+
+    def _test(name: str, fn) -> bool:
+        nonlocal passed, failed, total
+        total += 1
+        try:
+            result = fn()
+            if result:
+                print(f"  ✅ {name}")
+                passed += 1
+                return True
+            else:
+                print(f"  ❌ {name}: returned falsy")
+                failed += 1
+                return False
+        except Exception as e:
+            print(f"  ❌ {name}: {e}")
+            failed += 1
+            return False
+
+    # 1. Screenshot
+    print("\n📸 Screenshot Pipeline")
+    screenshot_path = os.path.join(tmpdir, "selftest_screen.png")
+
+    def test_screenshot():
+        from .screenshot import take_screenshot
+        img = take_screenshot()
+        if img:
+            img.save(screenshot_path)
+            size = os.path.getsize(screenshot_path)
+            print(f"      Saved {size:,} bytes → {screenshot_path}")
+            return size > 0
+        return False
+    _test("Take screenshot", test_screenshot)
+
+    # 2. OCR
+    print("\n🔍 OCR Pipeline")
+
+    def test_ocr():
+        from .ocr_tool import ocr_screenshot
+        results = ocr_screenshot()
+        count = len(results) if isinstance(results, list) else 0
+        print(f"      Detected {count} text regions")
+        return True  # OCR finding nothing is OK (headless, etc.)
+    _test("OCR text detection", test_ocr)
+
+    # 3. AT-SPI (accessibility)
+    print("\n♿ AT-SPI Element Detection")
+
+    def test_atspi():
+        from .perception import list_applications
+        apps = list_applications()
+        if isinstance(apps, list):
+            print(f"      Found {len(apps)} applications")
+            return True
+        return bool(apps)
+    _test("List applications", test_atspi)
+
+    def test_atspi_tree():
+        from .perception import find_elements
+        elems = find_elements()
+        count = len(elems) if isinstance(elems, list) else 0
+        print(f"      Found {count} interactive elements")
+        return True  # 0 elements is OK in headless
+    _test("Find interactive elements", test_atspi_tree)
+
+    # 4. Annotated screenshot (Set-of-Mark)
+    print("\n🏷️  Annotated Screenshot")
+
+    def test_annotate():
+        from .annotated_screenshot import annotated_screenshot
+        b64, labeled = annotated_screenshot()
+        ann_path = os.path.join(tmpdir, "selftest_annotated.png")
+        import base64 as b64_mod
+        raw = b64_mod.b64decode(b64)
+        with open(ann_path, 'wb') as f:
+            f.write(raw)
+        print(f"      {len(labeled)} elements labeled, saved → {ann_path}")
+        return len(raw) > 0
+    _test("Generate annotated screenshot", test_annotate)
+
+    # 5. Browser (CDP) — skip with --quick
+    if not getattr(args, 'quick', False):
+        print("\n🌐 Browser Automation (CDP)")
+
+        cdp_client = None
+
+        def test_cdp_connect():
+            nonlocal cdp_client
+            from .cdp_helper import get_or_create_cdp_client
+            cdp_client = get_or_create_cdp_client()
+            if cdp_client and cdp_client.is_available():
+                print(f"      Connected to CDP")
+                return True
+            print(f"      CDP not available (Chromium not running or auto-launch failed)")
+            return False
+
+        if _test("CDP connect/auto-launch", test_cdp_connect) and cdp_client:
+            def test_navigate():
+                cdp_client.navigate("data:text/html,<h1>ClawUI Self-Test</h1><p>If you can read this, CDP works!</p><button id='btn'>Click Me</button>")
+                time.sleep(0.5)
+                title = cdp_client.get_page_title()
+                print(f"      Page title: {title}")
+                return True
+            _test("Navigate to test page", test_navigate)
+
+            def test_cdp_js():
+                result = cdp_client.evaluate_js("document.querySelector('h1').textContent")
+                print(f"      JS eval result: {result}")
+                return result and "ClawUI" in str(result)
+            _test("JavaScript evaluation", test_cdp_js)
+
+            def test_cdp_screenshot():
+                ss_path = os.path.join(tmpdir, "selftest_cdp.png")
+                b64data = cdp_client.screenshot()
+                if b64data:
+                    import base64 as b64_mod
+                    raw = b64_mod.b64decode(b64data) if isinstance(b64data, str) else b64data
+                    with open(ss_path, 'wb') as f:
+                        f.write(raw)
+                    print(f"      Browser screenshot saved → {ss_path}")
+                    return len(raw) > 0
+                return False
+            _test("Browser screenshot", test_cdp_screenshot)
+
+            def test_cdp_click():
+                cdp_client.evaluate_js("document.getElementById('btn').addEventListener('click', () => { document.title = 'Clicked!'; })")
+                cdp_client.evaluate_js("document.getElementById('btn').click()")
+                time.sleep(0.3)
+                title = cdp_client.get_page_title()
+                print(f"      After click, title: {title}")
+                return title == "Clicked!"
+            _test("Browser click simulation", test_cdp_click)
+    else:
+        print("\n🌐 Browser tests skipped (--quick)")
+
+    # Summary
+    print("\n" + "=" * 50)
+    if failed == 0:
+        print(f"✅ All {passed}/{total} tests passed!")
+    else:
+        print(f"⚠️  {passed}/{total} passed, {failed} failed")
+
+    if not getattr(args, 'keep', False):
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        print(f"🧹 Cleaned up temp files")
+    else:
+        print(f"📁 Temp files kept at: {tmpdir}")
+
+    return 0 if failed == 0 else 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="clawui",
@@ -432,6 +595,11 @@ def main():
     annotate_p.add_argument("-o", "--output", default="annotated.png", help="Output file path (default: annotated.png)")
     annotate_p.add_argument("--source", choices=["auto", "atspi", "cdp", "both"], default="auto", help="Element detection source")
     annotate_p.add_argument("--json", dest="json_output", action="store_true", help="Output element list as JSON")
+
+    # Selftest (end-to-end validation)
+    selftest_p = subparsers.add_parser("selftest", help="Run end-to-end self-test: screenshot, OCR, browser automation")
+    selftest_p.add_argument("--quick", action="store_true", help="Skip browser tests (desktop-only)")
+    selftest_p.add_argument("--keep", action="store_true", help="Keep temporary files after test")
 
     # Version
     subparsers.add_parser("version", help="Show version")
@@ -695,6 +863,9 @@ def main():
             return 0
         except Exception as e:
             return _runtime_error("annotate", e)
+
+    elif args.command == "selftest":
+        return _run_selftest(args)
 
     elif args.command == "version":
         print(f"clawui {VERSION}")

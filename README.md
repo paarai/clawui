@@ -11,7 +11,7 @@ AI-driven desktop and browser automation for Linux. Control GUI applications, fi
 - **Multi-backend perception** — AT-SPI (Wayland-native), X11 (xdotool), CDP (Chromium), Marionette (Firefox)
 - **Smart routing** — `perception.py` auto-detects app type and picks the right backend
 - **60+ automation tools** — click, type, screenshot, OCR, wait-for-element, annotated screenshots, record/replay
-- **CLI** — `clawui apps|tree|screenshot|click|type|inspect|doctor|record|replay|wait` (v0.5.0)
+- **CLI** — `clawui apps|tree|screenshot|click|type|inspect|doctor|selftest|record|replay|wait` (v0.7.0)
 - **AI agent loop** — feed tasks in natural language, get autonomous GUI automation
 - **Browser automation** — CDP for Chromium, Marionette for Firefox (navigation, forms, JS eval, tabs)
 
@@ -43,6 +43,9 @@ clawui screenshot
 
 # Diagnose your setup
 clawui doctor
+
+# Run end-to-end pipeline self-test (screenshot/OCR/browser)
+clawui selftest --quick
 
 # Find interactive elements with numbered labels
 clawui elements
