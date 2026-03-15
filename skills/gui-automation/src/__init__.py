@@ -15,9 +15,11 @@ Full API:
         focus_window, active_window, minimize, maximize, close,
         # Wait helpers
         wait_for_element, wait_for_text,
+        # Retry decorator (for custom automation scripts)
+        retry,
         # Browser (CDP)
         browser,
     )
 """
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

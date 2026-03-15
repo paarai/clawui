@@ -36,11 +36,59 @@ Examples:
 from __future__ import annotations
 
 import base64
+import functools
 import json
+import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("clawui")
+
+
+# ---------------------------------------------------------------------------
+# Retry decorator for flaky UI operations
+# ---------------------------------------------------------------------------
+
+def retry(
+    max_attempts: int = 3,
+    delay: float = 0.5,
+    backoff: float = 1.5,
+    exceptions: tuple = (RuntimeError, TimeoutError, OSError, ConnectionError),
+):
+    """Retry decorator with exponential backoff for flaky UI operations.
+
+    Args:
+        max_attempts: Maximum number of attempts (default 3).
+        delay: Initial delay between retries in seconds.
+        backoff: Multiplier applied to delay after each retry.
+        exceptions: Tuple of exception types to catch and retry.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            attempts = kwargs.pop("_retry_attempts", max_attempts)
+            if attempts <= 1:
+                return func(*args, **kwargs)
+            last_exc = None
+            current_delay = delay
+            for attempt in range(1, attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exc = e
+                    if attempt < attempts:
+                        logger.debug(
+                            "clawui: %s attempt %d/%d failed (%s), retrying in %.1fs",
+                            func.__name__, attempt, attempts, e, current_delay,
+                        )
+                        time.sleep(current_delay)
+                        current_delay *= backoff
+            raise last_exc  # type: ignore[misc]
+        return wrapper
+    return decorator
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +146,7 @@ def tree(app: Optional[str] = None, max_depth: int = 5) -> str:
     return get_ui_tree_summary(app_name=app, max_depth=max_depth)
 
 
+@retry(max_attempts=2, delay=0.5)
 def find_elements(
     role: Optional[str] = None,
     name: Optional[str] = None,
@@ -129,6 +178,7 @@ def focused_element():
 # Desktop: Input Actions
 # ---------------------------------------------------------------------------
 
+@retry(max_attempts=3, delay=0.3)
 def click(
     text: Optional[str] = None,
     coords: Optional[tuple[int, int]] = None,
@@ -159,6 +209,7 @@ def click(
         raise ValueError("Provide either text= or coords=")
 
 
+@retry(max_attempts=3, delay=0.3)
 def double_click(coords: Optional[tuple[int, int]] = None, text: Optional[str] = None):
     """Double-click at coordinates or on element matching text."""
     from .actions import double_click as _dblclick
@@ -187,6 +238,7 @@ def press_key(key: str):
     _press(key)
 
 
+@retry(max_attempts=3, delay=0.3)
 def right_click(
     text: Optional[str] = None,
     coords: Optional[tuple[int, int]] = None,
@@ -312,6 +364,7 @@ class _BrowserAPI:
         self._helper = CDPHelper(port=port)
         self._helper.connect()
 
+    @retry(max_attempts=2, delay=1.0, exceptions=(RuntimeError, OSError, ConnectionError, ConnectionRefusedError))
     def navigate(self, url: str, wait: bool = True):
         """Navigate to a URL.
 
@@ -325,6 +378,7 @@ class _BrowserAPI:
             import time
             time.sleep(1)
 
+    @retry(max_attempts=3, delay=0.5)
     def click_text(self, text: str, exact: bool = False):
         """Click on an element containing the given text.
 
@@ -474,6 +528,90 @@ class _BrowserAPI:
         tab_list = h.list_tabs()
         if 0 <= index < len(tab_list):
             h.activate_tab(tab_list[index]["id"])
+
+    def fill(self, label_or_placeholder: str, text: str, clear: bool = True):
+        """Fill an input field by its label text, placeholder, or aria-label.
+
+        This is the user-friendly way to interact with forms — no CSS selectors needed.
+
+        Args:
+            label_or_placeholder: The visible label, placeholder text, or aria-label
+                of the input field (case-insensitive substring match).
+            text: Text to fill in.
+            clear: Clear existing value first (default True).
+
+        Raises:
+            RuntimeError: If no matching input field is found.
+
+        Examples:
+            browser.fill("Email", "user@example.com")
+            browser.fill("Password", "secret123")
+            browser.fill("Search", "ClawUI")
+        """
+        h = self._get_helper()
+        result = h.evaluate(f'''
+        (function() {{
+            const search = {json.dumps(label_or_placeholder)}.toLowerCase();
+            const inputs = document.querySelectorAll('input, textarea, select, [contenteditable="true"]');
+
+            function matchScore(el) {{
+                // Check placeholder
+                const ph = (el.getAttribute('placeholder') || '').toLowerCase();
+                if (ph && ph.includes(search)) return 3;
+                // Check aria-label
+                const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                if (aria && aria.includes(search)) return 3;
+                // Check name/id
+                const name = (el.getAttribute('name') || '').toLowerCase();
+                const id = el.id ? el.id.toLowerCase() : '';
+                if (name.includes(search) || id.includes(search)) return 2;
+                // Check associated <label>
+                if (el.id) {{
+                    const lbl = document.querySelector('label[for="' + el.id + '"]');
+                    if (lbl && lbl.textContent.toLowerCase().includes(search)) return 4;
+                }}
+                // Check parent/sibling label
+                const parent = el.closest('label');
+                if (parent && parent.textContent.toLowerCase().includes(search)) return 4;
+                // Check preceding sibling or nearby text
+                const prev = el.previousElementSibling;
+                if (prev && prev.textContent.toLowerCase().includes(search)) return 1;
+                return 0;
+            }}
+
+            let best = null;
+            let bestScore = 0;
+            for (const el of inputs) {{
+                const s = matchScore(el);
+                if (s > bestScore) {{ best = el; bestScore = s; }}
+            }}
+
+            if (!best) return JSON.stringify({{error: "not found"}});
+
+            best.focus();
+            best.dispatchEvent(new Event('focus', {{bubbles:true}}));
+            {'"best.value = \\"\\";' if clear else ''}
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value'
+            )?.set || Object.getOwnPropertyDescriptor(
+                window.HTMLTextAreaElement.prototype, 'value'
+            )?.set;
+            if (nativeSetter) {{
+                nativeSetter.call(best, {json.dumps(text)});
+            }} else {{
+                best.value = {json.dumps(text)};
+            }}
+            best.dispatchEvent(new Event('input', {{bubbles:true}}));
+            best.dispatchEvent(new Event('change', {{bubbles:true}}));
+            return JSON.stringify({{ok: true, tag: best.tagName, type: best.type || ""}});
+        }})()
+        ''')
+        val = result.get("result", {}).get("value", "")
+        if isinstance(val, str) and "not found" in val:
+            raise RuntimeError(
+                f"No input field matching '{label_or_placeholder}'. "
+                "Try browser.type_into(selector, text) with a CSS selector instead."
+            )
 
     def wait_for(self, selector: str, timeout: float = 10.0) -> bool:
         """Wait for a CSS selector to appear in the DOM.
