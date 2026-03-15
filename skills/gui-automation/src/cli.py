@@ -27,7 +27,7 @@ import subprocess
 import sys
 import time
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 
 
 def _import_error(module_name: str, exc: Exception) -> int:
@@ -427,6 +427,12 @@ def main():
     # Doctor (diagnostics)
     subparsers.add_parser("doctor", help="Check environment and diagnose issues")
 
+    # Annotate
+    annotate_p = subparsers.add_parser("annotate", help="Take annotated screenshot with numbered element labels (Set-of-Mark)")
+    annotate_p.add_argument("-o", "--output", default="annotated.png", help="Output file path (default: annotated.png)")
+    annotate_p.add_argument("--source", choices=["auto", "atspi", "cdp", "both"], default="auto", help="Element detection source")
+    annotate_p.add_argument("--json", dest="json_output", action="store_true", help="Output element list as JSON")
+
     # Version
     subparsers.add_parser("version", help="Show version")
 
@@ -668,6 +674,27 @@ def main():
 
     elif args.command == "doctor":
         return _run_doctor()
+
+    elif args.command == "annotate":
+        try:
+            from .annotated_screenshot import annotated_screenshot
+            import json as json_mod
+            b64, labeled = annotated_screenshot(sources=args.source)
+            # Save image
+            raw = base64.b64decode(b64)
+            with open(args.output, 'wb') as f:
+                f.write(raw)
+            print(f"📸 Annotated screenshot saved: {args.output} ({len(labeled)} elements labeled)")
+            if args.json_output:
+                print(json_mod.dumps([el.to_dict() for el in labeled], indent=2, ensure_ascii=False))
+            else:
+                for el in labeled[:30]:
+                    print(f"  [{el.index:>3}] {el.role:<16} {el.name[:40]:<40} @ ({el.center_x}, {el.center_y})")
+                if len(labeled) > 30:
+                    print(f"  ... and {len(labeled) - 30} more elements")
+            return 0
+        except Exception as e:
+            return _runtime_error("annotate", e)
 
     elif args.command == "version":
         print(f"clawui {VERSION}")

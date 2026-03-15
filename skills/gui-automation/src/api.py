@@ -18,6 +18,11 @@ Examples:
     type_text("Hello, world!")
     press_key("ctrl+s")
 
+    # Annotated screenshot (Set-of-Mark)
+    png, elements = annotate(save_to="annotated.png")
+    print(elements)  # [{index: 1, role: "push button", name: "OK", ...}, ...]
+    click_index(3)   # Click element #3
+
     # Browser automation
     browser.navigate("https://example.com")
     browser.click_text("Login")
@@ -454,6 +459,60 @@ def ocr(save_to: Optional[str] = None) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Convenience: wait helpers
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Annotated Screenshots (Set-of-Mark)
+# ---------------------------------------------------------------------------
+
+def annotate(sources: str = "auto", save_to: Optional[str] = None) -> tuple[bytes, list[dict]]:
+    """Take an annotated screenshot with numbered labels on interactive elements.
+
+    This implements the "Set-of-Mark" pattern: each interactive element gets a
+    red numbered label. Use click_index() to click any labeled element.
+
+    Args:
+        sources: Element detection source — "atspi", "cdp", "both", or "auto".
+        save_to: Optional file path to save the annotated PNG.
+
+    Returns:
+        (png_bytes, elements) where elements is a list of dicts with keys:
+        index, role, name, center, x, y, width, height, source, selector.
+    """
+    from .annotated_screenshot import annotated_screenshot
+
+    b64, labeled = annotated_screenshot(sources=sources)
+    raw = base64.b64decode(b64)
+    if save_to:
+        Path(save_to).write_bytes(raw)
+    return raw, [el.to_dict() for el in labeled]
+
+
+def click_index(index: int, button: int = 1):
+    """Click an element by its index from the last annotated screenshot.
+
+    Args:
+        index: The numbered label from annotate() (1-based).
+        button: Mouse button (1=left, 2=middle, 3=right).
+
+    Raises:
+        IndexError: If index is out of range.
+        RuntimeError: If no annotated screenshot has been taken.
+    """
+    from .annotated_screenshot import get_last_elements
+    from .actions import click as _click
+
+    elements = get_last_elements()
+    if not elements:
+        raise RuntimeError("No annotated screenshot taken yet. Call annotate() first.")
+    matches = [e for e in elements if e.index == index]
+    if not matches:
+        raise IndexError(f"No element with index {index}. Valid: 1–{len(elements)}")
+    el = matches[0]
+    _click(
+        x=el.center_x, y=el.center_y,
+        button={1: "left", 2: "middle", 3: "right"}.get(button, "left"),
+    )
+
 
 def wait_for_element(
     name: Optional[str] = None,

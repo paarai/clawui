@@ -76,3 +76,32 @@ def test_double_click_requires_args():
     from src.api import double_click
     with pytest.raises(ValueError, match="Provide either"):
         double_click()
+
+
+def test_annotate_import():
+    """annotate() and click_index() should be importable from the API."""
+    from src.api import annotate, click_index
+    assert callable(annotate)
+    assert callable(click_index)
+
+
+def test_click_index_no_annotation():
+    """click_index() should raise RuntimeError if no annotation taken."""
+    from src.api import click_index
+    from src.annotated_screenshot import _last_elements
+    # Clear any cached elements
+    _last_elements.clear()
+    with pytest.raises(RuntimeError, match="No annotated screenshot"):
+        click_index(1)
+
+
+def test_annotated_screenshot_dedup():
+    """Deduplication should remove overlapping elements."""
+    from src.annotated_screenshot import _dedup_elements
+    elements = [
+        {"x": 100, "y": 100, "width": 50, "height": 30, "role": "button", "name": "A"},
+        {"x": 102, "y": 101, "width": 50, "height": 30, "role": "button", "name": "A"},  # duplicate
+        {"x": 300, "y": 100, "width": 50, "height": 30, "role": "button", "name": "B"},
+    ]
+    result = _dedup_elements(elements)
+    assert len(result) == 2  # duplicate removed
