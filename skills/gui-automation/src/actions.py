@@ -175,6 +175,37 @@ def close_window():
     _run(f"{_get_tool()} key alt+F4")
 
 
+# === Clipboard Actions ===
+
+def clipboard_read() -> str:
+    """Read text from system clipboard. Tries xclip, then xsel."""
+    for tool, args in [("xclip", ["-selection", "clipboard", "-o"]),
+                       ("xsel", ["--clipboard", "--output"])]:
+        if shutil.which(tool):
+            r = subprocess.run([tool] + args, capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                return r.stdout
+    raise RuntimeError("No clipboard tool found. Install xclip or xsel.")
+
+
+def clipboard_write(text: str):
+    """Write text to system clipboard. Tries xclip, then xsel."""
+    for tool, args in [("xclip", ["-selection", "clipboard"]),
+                       ("xsel", ["--clipboard", "--input"])]:
+        if shutil.which(tool):
+            subprocess.run([tool] + args, input=text, text=True, timeout=5, check=True)
+            return
+    raise RuntimeError("No clipboard tool found. Install xclip or xsel.")
+
+
+def clipboard_clear():
+    """Clear the system clipboard."""
+    try:
+        clipboard_write("")
+    except RuntimeError:
+        raise
+
+
 # === Async Wrappers ===
 
 async def async_click(x=None, y=None, button="left"):

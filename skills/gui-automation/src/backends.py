@@ -3,7 +3,62 @@
 import os
 import json
 import base64
+import time as _time
+import sys
 from abc import ABC, abstractmethod
+from functools import wraps
+
+# --- P4-A: Backend rate limiting & retry ---
+_API_RETRY_MAX = int(os.getenv("CLAWUI_API_RETRY_MAX", "3"))
+_API_RETRY_DELAY = float(os.getenv("CLAWUI_API_RETRY_DELAY", "1.0"))
+
+
+def _with_api_retry(func=None, *, max_retries=None, initial_delay=None):
+    """Decorator: exponential backoff retry for transient API errors (429, 503, timeout).
+
+    Catches provider-specific rate-limit / connection errors via lazy isinstance
+    checks so the decorator works even when SDK packages are not installed.
+    """
+    max_retries = max_retries if max_retries is not None else _API_RETRY_MAX
+    initial_delay = initial_delay if initial_delay is not None else _API_RETRY_DELAY
+
+    def _is_retryable(exc):
+        """Return True for transient errors worth retrying."""
+        # Check by exception class name (avoids hard imports)
+        cls_name = type(exc).__name__
+        if cls_name in ("RateLimitError", "APIConnectionError", "APITimeoutError",
+                        "InternalServerError", "APIStatusError"):
+            # For APIStatusError, only retry 429 / 5xx
+            status = getattr(exc, "status_code", None)
+            if status is not None:
+                return status == 429 or status >= 500
+            return True
+        # stdlib / generic timeouts
+        if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+            return True
+        return False
+
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            last_err = None
+            for attempt in range(max_retries):
+                try:
+                    return fn(*args, **kwargs)
+                except Exception as e:
+                    last_err = e
+                    if not _is_retryable(e) or attempt >= max_retries - 1:
+                        raise
+                    print(f"[WARN] {fn.__qualname__}: {e} (attempt {attempt+1}/{max_retries}), "
+                          f"retrying in {delay:.1f}s...", file=sys.stderr)
+                    _time.sleep(delay)
+                    delay *= 2
+        return wrapper
+
+    if func is not None:
+        return decorator(func)
+    return decorator
 
 
 class AIBackend(ABC):
@@ -29,6 +84,7 @@ class ClaudeBackend(AIBackend):
         self.client = Anthropic()
         self.model = model
 
+    @_with_api_retry
     def chat(self, messages, tools, system):
         response = self.client.messages.create(
             model=self.model,
@@ -139,6 +195,7 @@ class OpenAIBackend(AIBackend):
 
         return oai_messages
 
+    @_with_api_retry
     def chat(self, messages, tools, system):
         oai_tools = self._convert_tools(tools)
         oai_messages = self._convert_messages(messages, system)
@@ -196,6 +253,7 @@ class AnyRouterBackend(AIBackend):
         self.client = Anthropic(api_key=api_key, base_url=base_url)
         self.model = model
 
+    @_with_api_retry
     def chat(self, messages, tools, system):
         response = self.client.messages.create(
             model=self.model,
