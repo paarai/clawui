@@ -30,10 +30,17 @@ def test_atspi():
 def test_x11():
     log("=== X11 Test ===")
     from clawui.x11_helper import list_windows
+
     wins = list_windows()
     named = [w for w in wins if w.title]
     log(f"X11 windows: {len(wins)} total, {len(named)} named")
-    assert len(named) > 0, "No named X11 windows found"
+
+    # Pure Wayland sessions may have no active XWayland windows.
+    # That's an environment limitation, not a product failure.
+    if len(named) == 0:
+        pytest.skip("No named X11 windows found (likely pure Wayland with no XWayland apps)")
+
+    assert len(named) > 0
 
 
 @pytest.mark.skipif(not _has_display(), reason="No display server")
