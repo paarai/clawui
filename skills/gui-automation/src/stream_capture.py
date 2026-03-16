@@ -63,6 +63,9 @@ class StreamCapture:
         self._last_frame_ts = 0.0
         self._avg_interval_ms = 0.0
         self._session_path: Optional[str] = None
+        self._bus = None
+        self._glib_loop: Optional[object] = None
+        self._glib_thread: Optional[threading.Thread] = None
 
     # ── GStreamer callback ──────────────────────────────────────
 
@@ -167,6 +170,7 @@ class StreamCapture:
         os.environ.setdefault("DBUS_SESSION_BUS_ADDRESS",
                               f"unix:path=/run/user/{os.getuid()}/bus")
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self._bus = bus
 
         last_err = None
         for attempt in range(1, retries + 1):
@@ -182,6 +186,12 @@ class StreamCapture:
 
         if last_err is not None:
             raise last_err
+
+        # GLib MainLoop is required for GStreamer appsink signal dispatch
+        if self._glib_loop is None:
+            self._glib_loop = GLib.MainLoop()
+            self._glib_thread = threading.Thread(target=self._glib_loop.run, daemon=True)
+            self._glib_thread.start()
 
         desc = (
             f"pipewiresrc path={node_id} do-timestamp=true ! "
@@ -201,6 +211,9 @@ class StreamCapture:
         self._appsink = sink
         self._running = True
         self._start_ts = time.time()
+        self._frames = 0
+        self._last_frame_ts = 0.0
+        self._avg_interval_ms = 0.0
         logger.info(f"StreamCapture started (node={node_id})")
 
     def get_frame(self) -> Optional[np.ndarray]:
@@ -219,15 +232,49 @@ class StreamCapture:
         with self._lock:
             return self._avg_interval_ms
 
+    def _stop_mutter_session(self):
+        """Best-effort close of Mutter session to avoid leaked PipeWire streams."""
+        if self._bus is None or not self._session_path:
+            return
+        try:
+            flags = Gio.DBusCallFlags.NONE if _GI_AVAILABLE else 0
+            self._bus.call_sync(
+                MUTTER_SC_BUS,
+                self._session_path,
+                MUTTER_SESSION_IFACE,
+                "Stop",
+                None,
+                None,
+                flags,
+                2000,
+                None,
+            )
+        except Exception as e:
+            logger.debug(f"Failed to stop Mutter session {self._session_path}: {e}")
+        finally:
+            self._session_path = None
+
     def stop(self):
         """Stop the capture pipeline and release resources."""
-        if not self._running:
+        if not self._running and not self._pipeline and not self._session_path:
             return
+
         self._running = False
+
         if self._pipeline:
             self._pipeline.set_state(Gst.State.NULL)
         self._pipeline = None
         self._appsink = None
+
+        self._stop_mutter_session()
+
+        if self._glib_loop and self._glib_loop.is_running():
+            self._glib_loop.quit()
+        if self._glib_thread and self._glib_thread.is_alive():
+            self._glib_thread.join(timeout=1.0)
+        self._glib_loop = None
+        self._glib_thread = None
+        self._bus = None
         logger.info("StreamCapture stopped")
 
     @property
