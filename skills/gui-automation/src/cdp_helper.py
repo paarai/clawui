@@ -32,19 +32,25 @@ def inherit_gui_session_env():
         return
 
     # Find candidate processes that are likely running in the GUI session
+    # Use numeric UID output to avoid username/UID mismatch bugs in `ps aux` parsing.
     candidates = []
     try:
-        # Find gnome-session processes owned by the current user
-        result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+        result = subprocess.run(
+            ['ps', '-eo', 'pid=,uid=,comm='],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
         for line in result.stdout.splitlines():
-            if any(proc in line for proc in ['gnome-session', 'Xorg', 'wayland', 'gnome-shell']):
-                parts = line.split()
-                if len(parts) >= 2:
-                    uid = parts[1]
-                    if uid == str(os.getuid()):  # Owned by current user
-                        pid = parts[1] if parts[1].isdigit() else None
-                        if pid:
-                            candidates.append(pid)
+            parts = line.strip().split(None, 2)
+            if len(parts) < 3:
+                continue
+            pid, uid, comm = parts
+            if uid != str(os.getuid()):
+                continue
+            if any(proc in comm for proc in ['gnome-session', 'Xorg', 'wayland', 'gnome-shell']):
+                if pid.isdigit():
+                    candidates.append(pid)
     except Exception:
         pass
 
@@ -86,7 +92,7 @@ def inherit_gui_session_env():
                         env[k.decode('utf-8', 'ignore')] = v.decode('utf-8', 'ignore')
 
                 # Apply relevant variables
-                for key in ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', ' WAYLAND_SOCKET']:
+                for key in ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'WAYLAND_SOCKET']:
                     if key in env and not os.environ.get(key):
                         os.environ[key] = env[key]
                         logger.debug('Inherited %s=%s from PID %s', key, env[key], pid)

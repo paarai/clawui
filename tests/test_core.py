@@ -5,6 +5,8 @@ import os
 import sys
 import time
 import tempfile
+import io
+from unittest.mock import patch
 
 # Add parent dir to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -76,6 +78,117 @@ def test_cdp_discover_ports():
     assert isinstance(result, list)
     for p in result:
         assert isinstance(p, int)
+
+
+def test_cdp_inherit_gui_env_from_ps_numeric_uid():
+    """inherit_gui_session_env should parse ps output using numeric uid and import DISPLAY/XAUTHORITY."""
+    from clawui import cdp_helper as mod
+
+    original_display = os.environ.get("DISPLAY")
+    original_xauthority = os.environ.get("XAUTHORITY")
+
+    class _ProcResult:
+        def __init__(self, stdout=""):
+            self.stdout = stdout
+
+    def fake_run(cmd, *args, **kwargs):
+        if cmd[:3] == ['ps', '-eo', 'pid=,uid=,comm=']:
+            return _ProcResult(stdout="111 1000 gnome-session\n")
+        if cmd[:2] == ['loginctl', 'list-sessions']:
+            return _ProcResult(stdout="")
+        raise RuntimeError(f"Unexpected command: {cmd}")
+
+    fake_env = b"DISPLAY=:99\x00XAUTHORITY=/tmp/.Xauthority-test\x00WAYLAND_DISPLAY=wayland-0\x00"
+
+    def fake_exists(path):
+        return path == '/proc/111/environ'
+
+    real_open = open
+
+    def fake_open(path, mode='r', *args, **kwargs):
+        if path == '/proc/111/environ' and 'b' in mode:
+            return io.BytesIO(fake_env)
+        return real_open(path, mode, *args, **kwargs)
+
+    try:
+        os.environ.pop("DISPLAY", None)
+        os.environ.pop("XAUTHORITY", None)
+
+        with patch.object(mod.os, 'getuid', return_value=1000), \
+             patch.object(mod.subprocess, 'run', side_effect=fake_run), \
+             patch.object(mod.os.path, 'exists', side_effect=fake_exists), \
+             patch('builtins.open', side_effect=fake_open):
+            mod.inherit_gui_session_env()
+
+        assert os.environ.get("DISPLAY") == ":99"
+        assert os.environ.get("XAUTHORITY") == "/tmp/.Xauthority-test"
+    finally:
+        if original_display is None:
+            os.environ.pop("DISPLAY", None)
+        else:
+            os.environ["DISPLAY"] = original_display
+
+        if original_xauthority is None:
+            os.environ.pop("XAUTHORITY", None)
+        else:
+            os.environ["XAUTHORITY"] = original_xauthority
+
+
+def test_cdp_env_key_typo_fixed_wayland_socket_is_imported():
+    """inherit_gui_session_env should import WAYLAND_SOCKET key (without leading-space typo)."""
+    from clawui import cdp_helper as mod
+
+    class _ProcResult:
+        def __init__(self, stdout=""):
+            self.stdout = stdout
+
+    def fake_run(cmd, *args, **kwargs):
+        if cmd[:3] == ['ps', '-eo', 'pid=,uid=,comm=']:
+            return _ProcResult(stdout="222 1000 gnome-shell\n")
+        if cmd[:2] == ['loginctl', 'list-sessions']:
+            return _ProcResult(stdout="")
+        raise RuntimeError(f"Unexpected command: {cmd}")
+
+    fake_env = b"WAYLAND_SOCKET=socket-123\x00"
+
+    def fake_exists(path):
+        return path == '/proc/222/environ'
+
+    real_open = open
+
+    def fake_open(path, mode='r', *args, **kwargs):
+        if path == '/proc/222/environ' and 'b' in mode:
+            return io.BytesIO(fake_env)
+        return real_open(path, mode, *args, **kwargs)
+
+    original = os.environ.get("WAYLAND_SOCKET")
+    original_display = os.environ.get("DISPLAY")
+    original_xauthority = os.environ.get("XAUTHORITY")
+    try:
+        os.environ.pop("WAYLAND_SOCKET", None)
+        os.environ.pop("DISPLAY", None)
+        os.environ.pop("XAUTHORITY", None)
+        with patch.object(mod.os, 'getuid', return_value=1000), \
+             patch.object(mod.subprocess, 'run', side_effect=fake_run), \
+             patch.object(mod.os.path, 'exists', side_effect=fake_exists), \
+             patch('builtins.open', side_effect=fake_open):
+            mod.inherit_gui_session_env()
+        assert os.environ.get("WAYLAND_SOCKET") == "socket-123"
+    finally:
+        if original is None:
+            os.environ.pop("WAYLAND_SOCKET", None)
+        else:
+            os.environ["WAYLAND_SOCKET"] = original
+
+        if original_display is None:
+            os.environ.pop("DISPLAY", None)
+        else:
+            os.environ["DISPLAY"] = original_display
+
+        if original_xauthority is None:
+            os.environ.pop("XAUTHORITY", None)
+        else:
+            os.environ["XAUTHORITY"] = original_xauthority
 
 
 def test_cdp_import():
