@@ -9,6 +9,7 @@ import sys
 import time
 import tempfile
 import unittest
+import pytest
 from unittest.mock import patch, MagicMock, PropertyMock
 
 # Ensure src is importable
@@ -366,6 +367,79 @@ class TestPublicAPI(unittest.TestCase):
         assert "nativeSetter" in js
         assert "dispatchEvent(new Event('input'" in js
         assert "dispatchEvent(new Event('change'" in js
+
+    def test_browser_click_selector_raises_on_not_found(self):
+        from clawui.api import _BrowserAPI
+
+        helper = MagicMock()
+        helper.evaluate.return_value = {"result": {"value": "not found"}}
+
+        api = _BrowserAPI()
+        api._helper = helper
+
+        with pytest.raises(RuntimeError, match="No element matching selector"):
+            api.click_selector("#missing")
+
+    def test_browser_type_into_raises_on_not_found(self):
+        from clawui.api import _BrowserAPI
+
+        helper = MagicMock()
+        helper.evaluate.return_value = {"result": {"value": "not found"}}
+
+        api = _BrowserAPI()
+        api._helper = helper
+
+        with pytest.raises(RuntimeError, match="No element matching selector"):
+            api.type_into("#missing", "x")
+
+    def test_browser_select_option_success(self):
+        from clawui.api import _BrowserAPI
+
+        helper = MagicMock()
+        helper.evaluate.return_value = {"result": {"value": '{"ok": true, "selected": "China"}'}}
+
+        api = _BrowserAPI()
+        api._helper = helper
+
+        api.select_option("Country", "China")
+
+        js = helper.evaluate.call_args[0][0]
+        assert "document.querySelectorAll('select')" in js
+        assert "dispatchEvent(new Event('change'" in js
+
+    def test_browser_check_raises_on_not_found(self):
+        from clawui.api import _BrowserAPI
+
+        helper = MagicMock()
+        helper.evaluate.return_value = {"result": {"value": "not found"}}
+
+        api = _BrowserAPI()
+        api._helper = helper
+
+        with pytest.raises(RuntimeError, match="No checkbox matching"):
+            api.check("I agree")
+
+    def test_browser_navigation_and_tab_helpers(self):
+        from clawui.api import _BrowserAPI
+
+        helper = MagicMock()
+        helper.list_tabs.return_value = [{"id": "tab-1"}, {"id": "tab-2"}]
+
+        api = _BrowserAPI()
+        api._helper = helper
+
+        api.go_back()
+        api.go_forward()
+        api.reload()
+        api.new_tab("https://example.com")
+        api.close_tab(index=1)
+
+        eval_calls = [c.args[0] for c in helper.evaluate.call_args_list]
+        assert "window.history.back()" in eval_calls
+        assert "window.history.forward()" in eval_calls
+        assert "window.location.reload()" in eval_calls
+        helper.send.assert_any_call("Target.createTarget", {"url": "https://example.com"})
+        helper.send.assert_any_call("Target.closeTarget", {"targetId": "tab-2"})
 
 
 class TestCLI(unittest.TestCase):

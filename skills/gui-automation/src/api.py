@@ -438,10 +438,27 @@ class _BrowserAPI:
         if result and result.get("result", {}).get("value") == "not found":
             raise RuntimeError(f"No clickable element with text '{text}'")
 
+    @retry(max_attempts=2, delay=0.5)
     def click_selector(self, selector: str):
-        """Click an element matching a CSS selector."""
+        """Click an element matching a CSS selector.
+
+        Args:
+            selector: CSS selector for the target element.
+
+        Raises:
+            RuntimeError: If no element matches the selector.
+        """
         h = self._get_helper()
-        h.evaluate(f'document.querySelector({json.dumps(selector)}).click()')
+        result = h.evaluate(f'''
+        (function() {{
+            const el = document.querySelector({json.dumps(selector)});
+            if (!el) return "not found";
+            el.click();
+            return "clicked";
+        }})()
+        ''')
+        if result and result.get("result", {}).get("value") == "not found":
+            raise RuntimeError(f"No element matching selector '{selector}'")
 
     def type_into(self, selector: str, text: str, clear: bool = True):
         """Type text into an input element matching a CSS selector.
@@ -455,7 +472,7 @@ class _BrowserAPI:
             clear: Clear existing value before typing (default True).
         """
         h = self._get_helper()
-        h.evaluate(f'''
+        result = h.evaluate(f'''
         (function() {{
             const el = document.querySelector({json.dumps(selector)});
             if (!el) return "not found";
@@ -477,6 +494,9 @@ class _BrowserAPI:
             return "ok";
         }})()
         ''')
+        val = result.get("result", {}).get("value", "") if result else ""
+        if val == "not found":
+            raise RuntimeError(f"No element matching selector '{selector}'")
 
     def get_html(self, selector: str = "body") -> str:
         """Get innerHTML of an element."""
@@ -632,6 +652,149 @@ class _BrowserAPI:
                 return True
             time.sleep(0.5)
         return False
+
+    def go_back(self):
+        """Navigate back in browser history."""
+        h = self._get_helper()
+        h.evaluate('window.history.back()')
+
+    def go_forward(self):
+        """Navigate forward in browser history."""
+        h = self._get_helper()
+        h.evaluate('window.history.forward()')
+
+    def reload(self):
+        """Reload the current page."""
+        h = self._get_helper()
+        h.evaluate('window.location.reload()')
+
+    def select_option(self, selector_or_label: str, value: str, by: str = "text"):
+        """Select an option from a <select> dropdown.
+
+        Args:
+            selector_or_label: CSS selector or label text for the <select> element.
+                If it starts with a CSS selector character (#, ., [), treated as selector.
+                Otherwise, searches by label/placeholder like fill().
+            value: The option to select.
+            by: Match option by "text" (visible text), "value" (value attr), or "index".
+
+        Raises:
+            RuntimeError: If select element or option not found.
+        """
+        h = self._get_helper()
+        result = h.evaluate(f'''
+        (function() {{
+            const selectorOrLabel = {json.dumps(selector_or_label)};
+            const val = {json.dumps(value)};
+            const by = {json.dumps(by)};
+
+            let sel = null;
+            // Try as CSS selector first if it looks like one
+            if (/^[#.\\[]/.test(selectorOrLabel)) {{
+                sel = document.querySelector(selectorOrLabel);
+            }}
+            if (!sel) {{
+                // Search by label like fill() does
+                const search = selectorOrLabel.toLowerCase();
+                const selects = document.querySelectorAll('select');
+                for (const s of selects) {{
+                    const ph = (s.getAttribute('aria-label') || '').toLowerCase();
+                    if (ph.includes(search)) {{ sel = s; break; }}
+                    if (s.id) {{
+                        const lbl = document.querySelector('label[for="' + s.id + '"]');
+                        if (lbl && lbl.textContent.toLowerCase().includes(search)) {{ sel = s; break; }}
+                    }}
+                    const parent = s.closest('label');
+                    if (parent && parent.textContent.toLowerCase().includes(search)) {{ sel = s; break; }}
+                    const name = (s.getAttribute('name') || '').toLowerCase();
+                    if (name.includes(search)) {{ sel = s; break; }}
+                }}
+            }}
+            if (!sel || sel.tagName !== 'SELECT') return JSON.stringify({{error: "select not found"}});
+
+            const opts = sel.options;
+            for (let i = 0; i < opts.length; i++) {{
+                const opt = opts[i];
+                let match = false;
+                if (by === "text") match = opt.textContent.trim().toLowerCase().includes(val.toLowerCase());
+                else if (by === "value") match = opt.value === val;
+                else if (by === "index") match = i === parseInt(val);
+                if (match) {{
+                    sel.value = opt.value;
+                    sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    return JSON.stringify({{ok: true, selected: opt.textContent.trim()}});
+                }}
+            }}
+            return JSON.stringify({{error: "option not found"}});
+        }})()
+        ''')
+        val = result.get("result", {}).get("value", "")
+        if isinstance(val, str) and "not found" in val:
+            raise RuntimeError(f"select_option failed: {val}")
+
+    def check(self, selector_or_label: str, checked: bool = True):
+        """Check or uncheck a checkbox/radio input.
+
+        Args:
+            selector_or_label: CSS selector or label text for the checkbox.
+            checked: True to check, False to uncheck.
+
+        Raises:
+            RuntimeError: If checkbox not found.
+        """
+        h = self._get_helper()
+        result = h.evaluate(f'''
+        (function() {{
+            const selectorOrLabel = {json.dumps(selector_or_label)};
+            const want = {json.dumps(checked)};
+            let el = null;
+            if (/^[#.\\[]/.test(selectorOrLabel)) {{
+                el = document.querySelector(selectorOrLabel);
+            }}
+            if (!el) {{
+                const search = selectorOrLabel.toLowerCase();
+                const inputs = document.querySelectorAll('input[type="checkbox"], input[type="radio"]');
+                for (const inp of inputs) {{
+                    if (inp.id) {{
+                        const lbl = document.querySelector('label[for="' + inp.id + '"]');
+                        if (lbl && lbl.textContent.toLowerCase().includes(search)) {{ el = inp; break; }}
+                    }}
+                    const parent = inp.closest('label');
+                    if (parent && parent.textContent.toLowerCase().includes(search)) {{ el = inp; break; }}
+                    const aria = (inp.getAttribute('aria-label') || '').toLowerCase();
+                    if (aria.includes(search)) {{ el = inp; break; }}
+                }}
+            }}
+            if (!el) return "not found";
+            if (el.checked !== want) {{ el.click(); }}
+            return "ok";
+        }})()
+        ''')
+        if result and result.get("result", {}).get("value") == "not found":
+            raise RuntimeError(f"No checkbox matching '{selector_or_label}'")
+
+    def new_tab(self, url: str = "about:blank"):
+        """Open a new browser tab and navigate to the URL.
+
+        Args:
+            url: URL to open in the new tab (default: blank page).
+        """
+        h = self._get_helper()
+        h.send("Target.createTarget", {"url": url})
+
+    def close_tab(self, index: Optional[int] = None):
+        """Close a browser tab.
+
+        Args:
+            index: Tab index to close. If None, closes the current tab.
+        """
+        h = self._get_helper()
+        if index is not None:
+            tab_list = h.list_tabs()
+            if 0 <= index < len(tab_list):
+                h.send("Target.closeTarget", {"targetId": tab_list[index]["id"]})
+        else:
+            h.evaluate('window.close()')
 
     def close(self):
         """Close the CDP connection."""
