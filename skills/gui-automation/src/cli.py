@@ -610,6 +610,7 @@ def main():
     run_p.add_argument("--max-steps", type=int, default=30, help="Maximum agent steps")
     run_p.add_argument("--timeout", type=float, default=None, help="Wall-clock timeout in seconds (default: no limit)")
     run_p.add_argument("--log", help="Write structured JSON run log to file (for debugging/replay analysis)")
+    run_p.add_argument("-q", "--quiet", action="store_true", help="Suppress step-by-step progress output")
 
     # List apps
     apps_p = subparsers.add_parser("apps", help="List running applications (AT-SPI + X11)")
@@ -744,10 +745,42 @@ def main():
             from .agent import run_agent
         except ImportError as e:
             return _import_error("agent", e)
+
+        quiet = getattr(args, 'quiet', False)
+
+        def _on_step(step, max_steps):
+            if not quiet:
+                print(f"\n{'─' * 50}")
+                print(f"🔄 Step {step}/{max_steps}")
+
+        def _on_tool(step, name, inp, result, elapsed):
+            if not quiet:
+                inp_str = json_mod.dumps(inp, ensure_ascii=False)
+                if len(inp_str) > 80:
+                    inp_str = inp_str[:77] + "..."
+                status = "✅" if "error" not in str(result.get("text", "")).lower() else "⚠️"
+                print(f"  {status} {name}({inp_str}) [{elapsed}s]")
+
+        def _on_finish(status, result, steps, elapsed, stats):
+            if not quiet:
+                print(f"\n{'━' * 50}")
+                icons = {"completed": "✅", "error": "❌", "timeout": "⏰", "max_steps_reached": "⚠️"}
+                print(f"{icons.get(status, '📋')} {status.upper()} — {steps} steps in {elapsed}s")
+                total_in = sum(t["input_tokens"] for t in stats["phases"].values())
+                total_out = sum(t["output_tokens"] for t in stats["phases"].values())
+                if total_in or total_out:
+                    print(f"📊 Tokens: {total_in:,} in / {total_out:,} out")
+                print(f"{'━' * 50}")
+
         try:
+            import json as json_mod
+            if not quiet:
+                print(f"🚀 Task: {args.task}")
+                print(f"   Model: {args.model} | Max steps: {args.max_steps}")
             result = run_agent(args.task, max_steps=args.max_steps, model=args.model,
                                log_file=getattr(args, 'log', None),
-                               timeout=getattr(args, 'timeout', None))
+                               timeout=getattr(args, 'timeout', None),
+                               on_step=_on_step, on_tool=_on_tool, on_finish=_on_finish)
             print(f"\nResult: {result}")
             return 0
         except Exception as e:

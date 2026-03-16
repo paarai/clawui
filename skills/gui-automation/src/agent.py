@@ -1979,7 +1979,8 @@ def _format_tool_result(tool_use, tool_result):
 
 
 def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-20250514",
-              log_file: str = None, timeout: float = None):
+              log_file: str = None, timeout: float = None,
+              on_step=None, on_tool=None, on_finish=None):
     """
     Run the GUI automation agent for a given task.
 
@@ -1989,10 +1990,14 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
         model: AI model to use
         log_file: Optional path to write structured JSON run log
         timeout: Wall-clock timeout in seconds (None = no limit)
+        on_step: Callback(step, max_steps) called at start of each step
+        on_tool: Callback(step, tool_name, tool_input, tool_result, elapsed) after each tool
+        on_finish: Callback(status, result, total_steps, elapsed, token_stats) at end
     """
     import datetime
     reset_token_stats()  # P3-F: Reset stats at start
-    deadline = (_time.time() + timeout) if timeout else None
+    _start_time = _time.time()
+    deadline = (_start_time + timeout) if timeout else None
     logger.info("Starting agent task model=%s max_steps=%s timeout=%s", model, max_steps, timeout)
     backend = get_backend(model)
     tools = create_tools()
@@ -2037,10 +2042,14 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
             run_log["status"] = "timeout"
             run_log["result"] = f"Wall-clock timeout after {timeout}s at step {step + 1}"
             _save_log()
+            if on_finish:
+                on_finish("timeout", run_log["result"], step + 1, round(_time.time() - _start_time, 1), get_token_stats())
             return run_log["result"]
 
         logger.info("Agent step %s/%s", step + 1, max_steps)
         logger.info("--- Step %d/%d ---", step + 1, max_steps)
+        if on_step:
+            on_step(step + 1, max_steps)
 
         # P3-A: Compress history before LLM call
         messages = _compress_history(messages)
@@ -2061,6 +2070,8 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                 run_log["status"] = "error"
                 run_log["result"] = f"3 consecutive backend errors. Last: {e}"
                 _save_log()
+                if on_finish:
+                    on_finish("error", run_log["result"], step + 1, round(_time.time() - _start_time, 1), get_token_stats())
                 return f"Agent stopped: 3 consecutive backend errors. Last: {e}"
             messages.append({"role": "user", "content": f"[System] Backend error occurred: {e}. Please retry."})
             continue
@@ -2105,6 +2116,8 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                     run_log["result"] = block.text
             run_log["status"] = "completed"
             _save_log()
+            if on_finish:
+                on_finish("completed", run_log.get("result"), step + 1, round(_time.time() - _start_time, 1), get_token_stats())
             break
 
         # Execute tools
@@ -2129,6 +2142,8 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                     tool_log_entry["result_text"] = tool_result["text"][:500]
                 step_log["tools"].append(tool_log_entry)
                 tool_results.append(_format_tool_result(tool_use, tool_result))
+                if on_tool:
+                    on_tool(step + 1, tool_use.name, tool_use.input, tool_result, elapsed)
         else:
             for tool_use in tool_uses:
                 t0 = _time.time()
@@ -2144,6 +2159,8 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
                     tool_log_entry["result_text"] = tool_result["text"][:500]
                 step_log["tools"].append(tool_log_entry)
                 tool_results.append(_format_tool_result(tool_use, tool_result))
+                if on_tool:
+                    on_tool(step + 1, tool_use.name, tool_use.input, tool_result, elapsed)
 
         messages.append({"role": "user", "content": tool_results})
         run_log["steps"].append(step_log)
@@ -2164,6 +2181,11 @@ def run_agent(task: str, max_steps: int = 30, model: str = "claude-sonnet-4-2025
             logger.info("  [%s]: %din + %dout (%d calls)", pname, pdata["input_tokens"], pdata["output_tokens"], pdata["calls"])
 
     _save_log()
+
+    _total_elapsed = round(_time.time() - _start_time, 1)
+    _final_steps = step + 1 if 'step' in dir() else 0
+    if on_finish:
+        on_finish(run_log["status"], run_log.get("result"), _final_steps, _total_elapsed, get_token_stats())
 
     if last_response and last_response.get("text"):
         return last_response["text"]
