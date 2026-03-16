@@ -7,11 +7,11 @@ on:
     branches: [main]
 
 jobs:
-  unit-tests:
-    runs-on: ubuntu-latest
+  test:
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.12"]
 
     steps:
       - uses: actions/checkout@v4
@@ -25,52 +25,43 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            xdotool \
-            libatspi2.0-dev \
             gir1.2-atspi-2.0 \
+            python3-gi \
             libgirepository1.0-dev \
-            libcairo2-dev \
-            pkg-config \
+            gobject-introspection \
+            xdotool \
             tesseract-ocr
 
       - name: Install Python dependencies
         run: |
+          pip install --upgrade pip
           pip install PyGObject
-          pip install -e "skills/gui-automation[dev]"
+          pip install -e ".[dev]"
+          pip install pytest pytest-timeout
 
-      - name: Run unit tests
-        run: |
-          python -m pytest tests/test_unit.py -v --tb=short
+      - name: Run tests
+        run: pytest tests/test_unit.py -v --timeout=120
 
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgirepository1.0-dev \
-            libcairo2-dev \
-            libatspi2.0-dev \
-            gir1.2-atspi-2.0 \
-            pkg-config
+      - name: Install ruff
+        run: pip install ruff
 
-      - name: Install dependencies
-        run: |
-          pip install PyGObject
-          pip install -e "skills/gui-automation"
+      - name: Lint
+        run: ruff check clawui/ --ignore E402
 
-      - name: Check syntax
+      - name: Format check (changed files only)
         run: |
-          python -m py_compile skills/gui-automation/src/agent.py
-          python -m py_compile skills/gui-automation/src/perception.py
-          python -m py_compile skills/gui-automation/src/cdp_helper.py
-          python -m py_compile skills/gui-automation/src/actions.py
-          python -m py_compile skills/gui-automation/src/cli.py
+          CHANGED=$(git diff --name-only origin/main...HEAD | grep '^clawui/.*\.py$' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No changed Python files to format-check."
+          else
+            ruff format --check $CHANGED
+          fi

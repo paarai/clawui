@@ -58,11 +58,11 @@ def inherit_gui_session_env():
                 info = subprocess.run(['loginctl', 'show-session', sid, '-p', 'Display', '-p', 'Type', '-p', 'Leader'], capture_output=True, text=True)
                 leader = None
                 display = None
-                for l in info.stdout.splitlines():
-                    if l.startswith('Leader='):
-                        leader = l.split('=')[1]
-                    elif l.startswith('Display='):
-                        display = l.split('=')[1]
+                for line in info.stdout.splitlines():
+                    if line.startswith('Leader='):
+                        leader = line.split('=')[1]
+                    elif line.startswith('Display='):
+                        display = line.split('=')[1]
                 if leader and leader.isdigit() and str(os.getuid()) == subprocess.run(['ps', '-o', 'uid=', '-p', leader], capture_output=True, text=True).stdout.strip():
                     candidates.append(leader)
                     if display and not os.environ.get('DISPLAY'):

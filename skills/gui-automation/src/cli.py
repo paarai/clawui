@@ -106,7 +106,7 @@ def _run_inspect(args) -> int:
             from .ocr_tool import ocr_extract_lines
             lines = ocr_extract_lines()
             if isinstance(lines, list):
-                results["ocr_lines"] = [l if isinstance(l, str) else str(l) for l in lines[:100]]
+                results["ocr_lines"] = [ln if isinstance(ln, str) else str(ln) for ln in lines[:100]]
             elif isinstance(lines, str):
                 results["ocr_lines"] = lines.strip().split("\n")[:100]
         except Exception as e:
@@ -308,7 +308,7 @@ def _run_doctor(fix: bool = False) -> int:
     if tess:
         try:
             langs = subprocess.check_output(["tesseract", "--list-langs"], stderr=subprocess.STDOUT).decode()
-            lang_list = [l.strip() for l in langs.strip().split("\n")[1:] if l.strip()]
+            lang_list = [lang.strip() for lang in langs.strip().split("\n")[1:] if lang.strip()]
             print(f"  ✅ tesseract: {tess} ({len(lang_list)} languages: {', '.join(lang_list[:5])}{'...' if len(lang_list) > 5 else ''})")
         except Exception:
             print(f"  ✅ tesseract: {tess}")
