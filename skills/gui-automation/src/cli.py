@@ -8,6 +8,7 @@ Usage examples:
     clawui screenshot -o screen.png
     clawui elements
     clawui find "OK"
+    clawui click 5
     clawui click --text "OK"
     clawui click --coords 100,200
     clawui inspect
@@ -601,6 +602,7 @@ def main():
         prog="clawui",
         description="AI-driven GUI automation for Linux desktop and browser",
     )
+    parser.add_argument("-V", "--version", action="version", version=f"%(prog)s {VERSION}")
     subparsers = parser.add_subparsers(dest="command")
 
     # Run a task
@@ -643,10 +645,11 @@ def main():
     find_p.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
     # Click
-    click_p = subparsers.add_parser("click", help="Click by OCR text match or explicit coordinates")
-    group = click_p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--text", help="Text to find on screen via OCR and click")
-    group.add_argument("--coords", help="Coordinates in format x,y (example: 100,200)")
+    click_p = subparsers.add_parser("click", help="Click by element index, OCR text, or coordinates")
+    click_p.add_argument("index", nargs="?", type=int, default=None,
+                         help="Element index from 'clawui elements' output")
+    click_p.add_argument("--text", help="Text to find on screen via OCR and click")
+    click_p.add_argument("--coords", help="Coordinates in format x,y (example: 100,200)")
 
     # Record/replay
     record_p = subparsers.add_parser("record", help="Start recording actions to recordings/NAME.json")
@@ -901,23 +904,46 @@ def main():
         except ImportError as e:
             return _import_error("actions", e)
         try:
+            if args.index is not None:
+                # Click element by index (from 'clawui elements')
+                from .annotated_screenshot import take_annotated_screenshot
+                _, elements = take_annotated_screenshot(source="auto", max_elements=200)
+                target = None
+                for el in elements:
+                    if el.get("index") == args.index:
+                        target = el
+                        break
+                if not target:
+                    print(f"Element index {args.index} not found. Run 'clawui elements' to see available elements.", file=sys.stderr)
+                    return 1
+                cx, cy = target["center"]
+                name = target.get("name", "?")
+                role = target.get("role", "?")
+                click(cx, cy)
+                print(f"Clicked [{args.index}] {role}: {name} at ({cx}, {cy})")
+                return 0
+
             if args.coords:
                 x, y = _parse_coords(args.coords)
                 click(x, y)
                 print(f"Clicked at ({x}, {y})")
                 return 0
 
-            from .screenshot import take_screenshot
-            from .ocr_tool import ocr_find_text
-            matches = ocr_find_text(take_screenshot(), args.text)
-            if not matches:
-                print(f"No text match found for '{args.text}'")
-                return 1
-            best = sorted(matches, key=lambda m: m.get("score", 0), reverse=True)[0]
-            x, y = best["center"]
-            click(x, y)
-            print(f"Clicked '{best.get('text', args.text)}' at ({x}, {y})")
-            return 0
+            if args.text:
+                from .screenshot import take_screenshot
+                from .ocr_tool import ocr_find_text
+                matches = ocr_find_text(take_screenshot(), args.text)
+                if not matches:
+                    print(f"No text match found for '{args.text}'")
+                    return 1
+                best = sorted(matches, key=lambda m: m.get("score", 0), reverse=True)[0]
+                x, y = best["center"]
+                click(x, y)
+                print(f"Clicked '{best.get('text', args.text)}' at ({x}, {y})")
+                return 0
+
+            print("Usage: clawui click INDEX | clawui click --text TEXT | clawui click --coords x,y", file=sys.stderr)
+            return 1
         except ImportError as e:
             return _import_error("ocr_tool/screenshot", e)
         except Exception as e:
