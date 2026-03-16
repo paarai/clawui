@@ -60,14 +60,34 @@ class CDPBackend:
                 time.sleep(self._reconnect_base_delay * (2 ** attempt) + random.uniform(0, 0.5))
         raise RuntimeError("Failed to start CDP browser after retries")
 
+    def _run_with_retries(self, action_name: str, operation, retries: int = 2):
+        """Execute a CDP operation with reconnection retries for transient failures."""
+        last_error = None
+
+        for attempt in range(retries + 1):
+            try:
+                self._ensure_connection()
+                return operation()
+            except Exception as exc:
+                last_error = exc
+                if attempt >= retries:
+                    break
+
+                # Reconnect and back off before retrying the action.
+                try:
+                    self._reconnect(attempt)
+                except Exception:
+                    pass
+                time.sleep(0.2 * (2 ** attempt) + random.uniform(0, 0.2))
+
+        raise RuntimeError(f"CDP action '{action_name}' failed after {retries + 1} attempts: {last_error}")
+
     def navigate(self, url: str):
         """Navigate to URL."""
-        self._ensure_connection()
-        return self.client.navigate(url)
+        return self._run_with_retries("navigate", lambda: self.client.navigate(url))
 
     def click(self, x: int, y: int):
         """Click at coordinates via JavaScript (No native click via CDP without DOM)."""
-        self._ensure_connection()
         # We use JavaScript to dispatch a mouse event at (x,y)
         js = f'''
         (function() {{
@@ -87,37 +107,48 @@ class CDPBackend:
             return "no-element";
         }})()
         '''
-        return self.client.evaluate(js)
+        return self._run_with_retries("click", lambda: self.client.evaluate(js))
 
     def type_in_element(self, text: str, selector: str = None):
         """Type text using real keyboard dispatch (robust)."""
-        self._ensure_connection()
-        self.client.type_text(selector, text)
-        return f"typed: '{text}' via dispatchKeyEvent"
+
+        def _do_type():
+            self.client.type_text(selector, text)
+            return f"typed: '{text}' via dispatchKeyEvent"
+
+        return self._run_with_retries("type_in_element", _do_type)
 
     def press_key(self, key: str):
         """Press a key (e.g., 'Enter', 'Tab')."""
-        self._ensure_connection()
-        self.client._raw_cdp("Input.dispatchKeyEvent", {"type": "keyDown", "key": key, "text": key})
-        time.sleep(0.05)
-        self.client._raw_cdp("Input.dispatchKeyEvent", {"type": "keyUp", "key": key})
-        return f"pressed: {key}"
+
+        def _do_press():
+            self.client._raw_cdp("Input.dispatchKeyEvent", {"type": "keyDown", "key": key, "text": key})
+            time.sleep(0.05)
+            self.client._raw_cdp("Input.dispatchKeyEvent", {"type": "keyUp", "key": key})
+            return f"pressed: {key}"
+
+        return self._run_with_retries("press_key", _do_press)
 
     def click_at(self, x: int, y: int):
         """Click at viewport coordinates via mouse dispatch."""
-        self._ensure_connection()
-        ok = self.client.dispatch_mouse(x, y)
-        if not ok:
-            raise RuntimeError(f"CDP click_at failed at ({x},{y})")
-        return f"clicked at ({x},{y})"
+
+        def _do_click():
+            ok = self.client.dispatch_mouse(x, y)
+            if not ok:
+                raise RuntimeError(f"CDP click_at failed at ({x},{y})")
+            return f"clicked at ({x},{y})"
+
+        return self._run_with_retries("click_at", _do_click)
 
     def get_page_info(self) -> Dict[str, Any]:
         """Get current page URL and title."""
-        self._ensure_connection()
-        return {
-            "url": self.client.get_page_url(),
-            "title": self.client.get_page_title()
-        }
+        return self._run_with_retries(
+            "get_page_info",
+            lambda: {
+                "url": self.client.get_page_url(),
+                "title": self.client.get_page_title()
+            }
+        )
 
     def wait_for_load(self, timeout: float = 10.0, poll_interval: float = 0.2):
         """Wait until document.readyState is complete or timeout is reached."""

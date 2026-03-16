@@ -253,6 +253,52 @@ def test_cdp_wait_for_load_timeout_returns_false():
     assert backend.wait_for_load(timeout=0.05, poll_interval=0.01) is False
 
 
+def test_cdp_navigate_retries_after_transient_failure():
+    """CDPBackend.navigate should retry once after a transient CDP failure."""
+    from clawui.cdp_backend import CDPBackend
+
+    backend = CDPBackend.__new__(CDPBackend)
+    backend._ensure_connection = lambda: None
+
+    class FlakyClient:
+        def __init__(self):
+            self.calls = 0
+
+        def navigate(self, _url):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("transient disconnect")
+            return {"ok": True}
+
+    flaky = FlakyClient()
+    backend.client = flaky
+    backend._reconnect = lambda _attempt=0: None
+
+    result = backend.navigate("https://example.com")
+    assert result == {"ok": True}
+    assert flaky.calls == 2, f"Expected retry to call navigate twice, got {flaky.calls}"
+
+
+def test_cdp_click_at_raises_after_retry_exhausted():
+    """CDPBackend.click_at should raise clear error when all retries are exhausted."""
+    from clawui.cdp_backend import CDPBackend
+
+    backend = CDPBackend.__new__(CDPBackend)
+    backend._ensure_connection = lambda: None
+
+    class FailingClient:
+        def dispatch_mouse(self, _x, _y):
+            raise RuntimeError("cdp unavailable")
+
+    backend.client = FailingClient()
+    backend._reconnect = lambda _attempt=0: None
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="click_at"):
+        backend.click_at(10, 20)
+
+
 def test_marionette_import():
     from clawui.marionette_helper import MarionetteClient
 
