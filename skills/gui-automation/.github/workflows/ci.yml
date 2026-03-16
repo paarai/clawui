@@ -29,13 +29,15 @@ jobs:
             python3-gi \
             libgirepository1.0-dev \
             gobject-introspection \
+            pkg-config \
+            libcairo2-dev \
             xdotool \
             tesseract-ocr
 
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install PyGObject
+          pip install pycairo PyGObject
           pip install -e ".[dev]"
           pip install pytest pytest-timeout
 
@@ -60,6 +62,8 @@ jobs:
             python3-gi \
             libgirepository1.0-dev \
             gobject-introspection \
+            pkg-config \
+            libcairo2-dev \
             xdotool xvfb xterm \
             tesseract-ocr \
             dbus-x11 at-spi2-core \
@@ -69,7 +73,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install PyGObject
+          pip install pycairo PyGObject
           pip install -e ".[dev]"
           pip install pytest pytest-timeout
 
