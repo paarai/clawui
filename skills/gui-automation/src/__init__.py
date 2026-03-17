@@ -28,6 +28,26 @@ __version__ = "0.8.4"
 
 logging.getLogger("clawui").addHandler(logging.NullHandler())
 
+# Public exception hierarchy
+from clawui.exceptions import (  # noqa: E402, F401
+    ClawUIError,
+    BackendError,
+    CDPError,
+    MarionetteError,
+    ATSPIError,
+    X11Error,
+    YdotoolError,
+    PerceptionError,
+    ElementNotFoundError,
+    TextNotFoundError,
+    ScreenshotError,
+    TimeoutError,
+    WaitTimeoutError,
+    AgentError,
+    ModelError,
+    ConfigError,
+)
+
 
 def enable_logging(level=logging.DEBUG):
     """Enable clawui logging to stderr with a readable format."""
