@@ -7,6 +7,7 @@ import shutil
 import logging
 
 logger = logging.getLogger("clawui.actions")
+from clawui.exceptions import BackendError, YdotoolError
 
 TYPING_DELAY_MS = 12
 TYPING_CHUNK_SIZE = 50
@@ -84,7 +85,7 @@ def _get_tool() -> str:
         logger.info("Using ydotool as fallback input backend")
         return "ydotool"
     logger.error("No input tool found (xdotool/ydotool)")
-    raise RuntimeError("No input tool found. Install xdotool or ydotool.")
+    raise BackendError("No input tool found. Install xdotool or ydotool.")
 
 
 # === Mouse Actions ===
@@ -225,7 +226,7 @@ def focus_window(name: str | None = None, window_id: int | None = None):
         elif name:
             _run(f"wmctrl -a {shlex.quote(name)}")
     else:
-        raise RuntimeError("No window management tool found. Install xdotool or wmctrl.")
+        raise BackendError("No window management tool found. Install xdotool or wmctrl.")
 
 
 def get_active_window() -> dict:

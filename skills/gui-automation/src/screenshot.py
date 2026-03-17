@@ -332,7 +332,7 @@ def take_screenshot(
 
         if not captured:
             logger.error("No screenshot method worked")
-            raise RuntimeError("No screenshot method worked. Tried GNOME D-Bus, grim, scrot, gnome-screenshot, mss, placeholder.")
+            raise ScreenshotError("No screenshot method worked. Tried GNOME D-Bus, grim, scrot, gnome-screenshot, mss, placeholder.")
 
     # If we captured full screen but wanted a region, crop it now
     # Crop only when region was requested and we captured a full-screen image.

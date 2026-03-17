@@ -7,6 +7,7 @@ Includes automatic reconnection for improved reliability.
 import time
 import random
 from typing import Optional, Dict, Any
+from clawui.exceptions import CDPError, ConfigError
 
 
 _KEY_EVENT_MAP = {
@@ -53,7 +54,7 @@ class CDPBackend:
             # Connection failed, attempt reconnection
             self._reconnect(attempt)
 
-        raise RuntimeError(f"CDP connection lost after {self._max_reconnect_attempts} reconnection attempts")
+        raise CDPError(f"CDP connection lost after {self._max_reconnect_attempts} reconnection attempts")
 
     def _reconnect(self, attempt: int = 0):
         """Attempt to obtain a fresh CDP client, launching browser if needed."""
@@ -61,7 +62,7 @@ class CDPBackend:
         time.sleep(delay)
         self.client = get_or_create_cdp_client(port=self.port)
         if not self.client:
-            raise RuntimeError("Failed to (re)connect to CDP browser")
+            raise CDPError("Failed to (re)connect to CDP browser")
 
     def _ensure_started(self):
         """Ensure a CDP-capable browser is running (with retry)."""
@@ -74,7 +75,7 @@ class CDPBackend:
                 pass
             if attempt < self._max_reconnect_attempts - 1:
                 time.sleep(self._reconnect_base_delay * (2 ** attempt) + random.uniform(0, 0.5))
-        raise RuntimeError("Failed to start CDP browser after retries")
+        raise CDPError("Failed to start CDP browser after retries")
 
     def _run_with_retries(self, action_name: str, operation, retries: int = 2):
         """Execute a CDP operation with reconnection retries for transient failures."""
@@ -96,7 +97,7 @@ class CDPBackend:
                     pass
                 time.sleep(0.2 * (2 ** attempt) + random.uniform(0, 0.2))
 
-        raise RuntimeError(f"CDP action '{action_name}' failed after {retries + 1} attempts: {last_error}")
+        raise CDPError(f"CDP action '{action_name}' failed after {retries + 1} attempts: {last_error}")
 
     def navigate(self, url: str):
         """Navigate to URL."""
@@ -140,7 +141,7 @@ class CDPBackend:
         def _do_press():
             normalized = str(key or "").strip()
             if not normalized:
-                raise ValueError("press_key requires a non-empty key")
+                raise ConfigError("press_key requires a non-empty key")
 
             mapping = _KEY_EVENT_MAP.get(normalized.upper())
             if mapping:
@@ -159,7 +160,7 @@ class CDPBackend:
                 self.client._raw_cdp("Input.dispatchKeyEvent", {"type": "keyUp", "key": normalized})
                 return f"pressed: {normalized}"
 
-            raise ValueError(f"Unsupported key: {key}")
+            raise ConfigError(f"Unsupported key: {key}")
 
         return self._run_with_retries("press_key", _do_press)
 

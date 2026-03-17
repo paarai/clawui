@@ -3,6 +3,7 @@
 import json
 import logging
 from typing import List, Optional
+from clawui.exceptions import X11Error, ATSPIError
 
 logger = logging.getLogger("clawui.perception")
 
@@ -405,7 +406,7 @@ def do_action(element, action_name: str, value=None):
         # AT-SPI element (dict with x,y)
         if ATSPI_AVAILABLE:
             return atspi_do_action(element, action_name, value)
-        raise RuntimeError("AT-SPI backend not available")
+        raise ATSPIError("AT-SPI backend not available")
 
 
 def set_text(element, text: str):
@@ -438,7 +439,7 @@ def click_at(x: int, y: int, button: int = 1):
     if X11_AVAILABLE:
         return x11_click_at(x, y, button)
     else:
-        raise RuntimeError("X11 backend required for absolute click")
+        raise X11Error("X11 backend required for absolute click")
 
 
 def type_text(text: str):
@@ -446,4 +447,4 @@ def type_text(text: str):
     if X11_AVAILABLE:
         return x11_type(text)
     else:
-        raise RuntimeError("X11 backend required for typing")
+        raise X11Error("X11 backend required for typing")

@@ -11,6 +11,7 @@ import tempfile
 import unittest
 import pytest
 from unittest.mock import patch, MagicMock, PropertyMock
+from clawui.exceptions import ElementNotFoundError
 
 # Ensure src is importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'skills', 'gui-automation'))
@@ -403,7 +404,7 @@ class TestPublicAPI(unittest.TestCase):
         api = _BrowserAPI()
         api._helper = helper
 
-        with pytest.raises(RuntimeError, match="No element matching selector"):
+        with pytest.raises(ElementNotFoundError, match="No element matching selector"):
             api.click_selector("#missing")
 
     def test_browser_type_into_raises_on_not_found(self):

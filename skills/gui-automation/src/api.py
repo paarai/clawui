@@ -42,6 +42,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Optional
+from clawui.exceptions import ElementNotFoundError, WaitTimeoutError
 
 logger = logging.getLogger("clawui")
 
@@ -436,7 +437,7 @@ class _BrowserAPI:
         '''
         result = h.evaluate(js)
         if result and result.get("result", {}).get("value") == "not found":
-            raise RuntimeError(f"No clickable element with text '{text}'")
+            raise ElementNotFoundError(f"No clickable element with text '{text}'")
 
     @retry(max_attempts=2, delay=0.5)
     def click_selector(self, selector: str):
@@ -458,7 +459,7 @@ class _BrowserAPI:
         }})()
         ''')
         if result and result.get("result", {}).get("value") == "not found":
-            raise RuntimeError(f"No element matching selector '{selector}'")
+            raise ElementNotFoundError(f"No element matching selector '{selector}'")
 
     def type_into(self, selector: str, text: str, clear: bool = True):
         """Type text into an input element matching a CSS selector.
