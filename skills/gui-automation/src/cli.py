@@ -434,6 +434,167 @@ def _run_wait(args) -> int:
     return 1
 
 
+def _run_status(args) -> int:
+    """Show live runtime health of all automation backends."""
+    import json as json_mod
+    import shutil
+    import socket
+
+    info: dict = {"version": VERSION, "backends": {}}
+
+    # --- Display server ---
+    display_type = os.environ.get("XDG_SESSION_TYPE", "unknown")
+    display = os.environ.get("DISPLAY", "")
+    wayland = os.environ.get("WAYLAND_DISPLAY", "")
+    info["display"] = {"session_type": display_type, "DISPLAY": display or None, "WAYLAND_DISPLAY": wayland or None}
+
+    # --- AT-SPI ---
+    atspi_info: dict = {"available": False}
+    try:
+        from .perception import ATSPI_AVAILABLE
+        if ATSPI_AVAILABLE:
+            from .perception import list_applications as _la
+            apps = [a for a in _la() if not a.startswith("Chromium") and not a.startswith("Firefox")]
+            atspi_info = {"available": True, "apps": len(apps)}
+    except Exception as e:
+        atspi_info["error"] = str(e)
+    info["backends"]["atspi"] = atspi_info
+
+    # --- X11 ---
+    x11_info: dict = {"available": False}
+    try:
+        from .perception import X11_AVAILABLE
+        if X11_AVAILABLE:
+            from .x11_helper import list_windows
+            wins = list_windows()
+            x11_info = {"available": True, "windows": len(wins)}
+    except Exception as e:
+        x11_info["error"] = str(e)
+    info["backends"]["x11"] = x11_info
+
+    # --- CDP (Chromium) ---
+    cdp_info: dict = {"available": False}
+    try:
+        from .cdp_helper import get_or_create_cdp_client
+        client = get_or_create_cdp_client()
+        if client and client.is_available():
+            tabs = client.list_targets()
+            pages = [t for t in tabs if t.get("type") == "page"]
+            title = client.get_page_title() or ""
+            cdp_info = {"available": True, "tabs": len(pages), "active_title": title}
+        else:
+            cdp_info["note"] = "Not connected (start Chromium with --remote-debugging-port=9222)"
+    except Exception as e:
+        cdp_info["error"] = str(e)
+    info["backends"]["cdp"] = cdp_info
+
+    # --- Marionette (Firefox) ---
+    mario_info: dict = {"available": False}
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1)
+        if s.connect_ex(("127.0.0.1", 2828)) == 0:
+            mario_info["available"] = True
+            try:
+                from .marionette_helper import MarionetteClient
+                mc = MarionetteClient()
+                if mc._connect():
+                    mario_info["title"] = mc.get_title() or ""
+                    mario_info["url"] = mc.get_url() or ""
+                    mc.close()
+            except Exception:
+                pass
+        else:
+            mario_info["note"] = "Not connected (start Firefox with --marionette)"
+        s.close()
+    except Exception as e:
+        mario_info["error"] = str(e)
+    info["backends"]["marionette"] = mario_info
+
+    # --- Screenshot ---
+    ss_info: dict = {"available": False, "method": None}
+    for tool, method in [("grim", "grim"), ("gnome-screenshot", "gnome-screenshot"), ("scrot", "scrot")]:
+        if shutil.which(tool):
+            ss_info = {"available": True, "method": method}
+            break
+    # Check stream capture
+    try:
+        from .stream_capture import MutterScreenCast
+        ss_info["stream_capture"] = True
+    except Exception:
+        ss_info["stream_capture"] = False
+    info["backends"]["screenshot"] = ss_info
+
+    # --- OCR ---
+    ocr_info: dict = {"available": bool(shutil.which("tesseract"))}
+    info["backends"]["ocr"] = ocr_info
+
+    # --- Output ---
+    if getattr(args, "json_output", False):
+        print(json_mod.dumps(info, indent=2, ensure_ascii=False))
+    else:
+        print(f"ClawUI v{VERSION} — Runtime Status")
+        print("=" * 45)
+
+        # Display
+        d = info["display"]
+        print(f"\n🖥️  Display: {d['session_type']}", end="")
+        if d["DISPLAY"]:
+            print(f" | X11={d['DISPLAY']}", end="")
+        if d["WAYLAND_DISPLAY"]:
+            print(f" | Wayland={d['WAYLAND_DISPLAY']}", end="")
+        print()
+
+        # Backends
+        def _icon(available: bool) -> str:
+            return "✅" if available else "❌"
+
+        a = info["backends"]["atspi"]
+        print(f"\n♿ AT-SPI:      {_icon(a['available'])}", end="")
+        if a["available"]:
+            print(f"  ({a.get('apps', '?')} desktop apps)")
+        else:
+            print(f"  {a.get('error', 'unavailable')}")
+
+        x = info["backends"]["x11"]
+        print(f"🪟 X11:         {_icon(x['available'])}", end="")
+        if x["available"]:
+            print(f"  ({x.get('windows', '?')} windows)")
+        else:
+            print(f"  {x.get('error', 'unavailable')}")
+
+        c = info["backends"]["cdp"]
+        print(f"🌐 CDP:         {_icon(c['available'])}", end="")
+        if c["available"]:
+            print(f"  ({c.get('tabs', '?')} tabs) — {c.get('active_title', '')[:50]}")
+        else:
+            print(f"  {c.get('note', c.get('error', 'unavailable'))}")
+
+        m = info["backends"]["marionette"]
+        print(f"🦊 Marionette:  {_icon(m['available'])}", end="")
+        if m["available"]:
+            print(f"  — {m.get('title', '')[:50]}")
+        else:
+            print(f"  {m.get('note', m.get('error', 'unavailable'))}")
+
+        s = info["backends"]["screenshot"]
+        print(f"📸 Screenshot:  {_icon(s['available'])}", end="")
+        if s["available"]:
+            extras = []
+            if s.get("method"):
+                extras.append(s["method"])
+            if s.get("stream_capture"):
+                extras.append("stream")
+            print(f"  ({', '.join(extras)})")
+        else:
+            print("  no tool found")
+
+        o = info["backends"]["ocr"]
+        print(f"🔍 OCR:         {_icon(o['available'])}")
+
+    return 0
+
+
 def _run_selftest(args) -> int:
     """Run end-to-end self-test validating the full automation pipeline."""
     import tempfile
@@ -718,6 +879,10 @@ def main():
     selftest_p.add_argument("--quick", action="store_true", help="Skip browser tests (desktop-only)")
     selftest_p.add_argument("--keep", action="store_true", help="Keep temporary files after test")
     selftest_p.add_argument("--step-timeout", type=float, default=20.0, help="Per-check timeout in seconds (default: 20)")
+
+    # Status (runtime health)
+    status_p = subparsers.add_parser("status", help="Show live runtime health of all backends")
+    status_p.add_argument("--json", action="store_true", dest="json_output", help="Output as JSON")
 
     # Version
     subparsers.add_parser("version", help="Show version")
@@ -1093,6 +1258,9 @@ def main():
 
     elif args.command == "selftest":
         return _run_selftest(args)
+
+    elif args.command == "status":
+        return _run_status(args)
 
     elif args.command == "version":
         print(f"clawui {VERSION}")
