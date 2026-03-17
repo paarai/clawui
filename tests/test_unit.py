@@ -1083,3 +1083,30 @@ class TestProactivePlanAdaptation(unittest.TestCase):
         assert isinstance(_REPLAN_INTERVAL, int)
         assert isinstance(_REPLAN_ENABLED, bool)
         assert _REPLAN_INTERVAL >= 1
+
+
+# === ydotool key mapping tests ===
+
+class TestYdotoolKeyMapping(unittest.TestCase):
+    def test_single_key(self):
+        from clawui.actions import _xdotool_key_to_ydotool
+        assert _xdotool_key_to_ydotool("Return") == "KEY_ENTER"
+        assert _xdotool_key_to_ydotool("escape") == "KEY_ESC"
+        assert _xdotool_key_to_ydotool("Tab") == "KEY_TAB"
+        assert _xdotool_key_to_ydotool("F4") == "KEY_F4"
+
+    def test_combo_keys(self):
+        from clawui.actions import _xdotool_key_to_ydotool
+        assert _xdotool_key_to_ydotool("ctrl+c") == "KEY_LEFTCTRL+KEY_C"
+        assert _xdotool_key_to_ydotool("alt+F4") == "KEY_LEFTALT+KEY_F4"
+        assert _xdotool_key_to_ydotool("ctrl+shift+s") == "KEY_LEFTCTRL+KEY_LEFTSHIFT+KEY_S"
+
+    def test_unknown_key_fallback(self):
+        from clawui.actions import _xdotool_key_to_ydotool
+        result = _xdotool_key_to_ydotool("XF86AudioPlay")
+        assert result == "KEY_XF86AUDIOPLAY"
+
+    def test_letter_and_digit(self):
+        from clawui.actions import _xdotool_key_to_ydotool
+        assert _xdotool_key_to_ydotool("a") == "KEY_A"
+        assert _xdotool_key_to_ydotool("5") == "KEY_5"

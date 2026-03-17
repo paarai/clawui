@@ -11,6 +11,55 @@ logger = logging.getLogger("clawui.actions")
 TYPING_DELAY_MS = 12
 TYPING_CHUNK_SIZE = 50
 
+# Mapping from xdotool key names to ydotool KEY_* codes
+_YDOTOOL_KEY_MAP = {
+    "return": "KEY_ENTER", "Return": "KEY_ENTER", "enter": "KEY_ENTER",
+    "tab": "KEY_TAB", "Tab": "KEY_TAB",
+    "escape": "KEY_ESC", "Escape": "KEY_ESC",
+    "backspace": "KEY_BACKSPACE", "BackSpace": "KEY_BACKSPACE",
+    "delete": "KEY_DELETE", "Delete": "KEY_DELETE",
+    "space": "KEY_SPACE",
+    "up": "KEY_UP", "Up": "KEY_UP",
+    "down": "KEY_DOWN", "Down": "KEY_DOWN",
+    "left": "KEY_LEFT", "Left": "KEY_LEFT",
+    "right": "KEY_RIGHT", "Right": "KEY_RIGHT",
+    "home": "KEY_HOME", "Home": "KEY_HOME",
+    "end": "KEY_END", "End": "KEY_END",
+    "page_up": "KEY_PAGEUP", "Prior": "KEY_PAGEUP",
+    "page_down": "KEY_PAGEDOWN", "Next": "KEY_PAGEDOWN",
+    "ctrl": "KEY_LEFTCTRL", "Control_L": "KEY_LEFTCTRL",
+    "alt": "KEY_LEFTALT", "Alt_L": "KEY_LEFTALT",
+    "shift": "KEY_LEFTSHIFT", "Shift_L": "KEY_LEFTSHIFT",
+    "super": "KEY_LEFTMETA", "Super_L": "KEY_LEFTMETA",
+}
+# Add F1-F12
+for _i in range(1, 13):
+    _YDOTOOL_KEY_MAP[f"F{_i}"] = f"KEY_F{_i}"
+# Add letters and digits
+for _c in "abcdefghijklmnopqrstuvwxyz":
+    _YDOTOOL_KEY_MAP[_c] = f"KEY_{_c.upper()}"
+for _d in "0123456789":
+    _YDOTOOL_KEY_MAP[_d] = f"KEY_{_d}"
+
+
+def _xdotool_key_to_ydotool(key: str) -> str:
+    """Convert xdotool key combo string to ydotool key format.
+
+    xdotool: 'ctrl+c', 'alt+F4', 'Return'
+    ydotool: 'KEY_LEFTCTRL+KEY_C', 'KEY_LEFTALT+KEY_F4', 'KEY_ENTER'
+    """
+    parts = key.split("+")
+    mapped = []
+    for part in parts:
+        part_stripped = part.strip()
+        ydotool_name = _YDOTOOL_KEY_MAP.get(part_stripped)
+        if ydotool_name:
+            mapped.append(ydotool_name)
+        else:
+            # Fallback: assume KEY_ prefix for unknown keys
+            mapped.append(f"KEY_{part_stripped.upper()}")
+    return "+".join(mapped)
+
 
 def _run(cmd: str, **kwargs) -> subprocess.CompletedProcess:
     """Run a shell command."""
@@ -103,11 +152,11 @@ def drag(start_x: int, start_y: int, end_x: int, end_y: int):
     else:
         mouse_move(start_x, start_y)
         import time
-        _run("ydotool click 1")  # down
+        _run("ydotool click --down 1")
         time.sleep(0.05)
         mouse_move(end_x, end_y)
         time.sleep(0.05)
-        _run("ydotool click 1")  # up
+        _run("ydotool click --up 1")
 
 
 def scroll(direction: str = "down", amount: int = 3, x: int | None = None, y: int | None = None):
@@ -122,11 +171,10 @@ def scroll(direction: str = "down", amount: int = 3, x: int | None = None, y: in
         btn = btn_map.get(direction, 5)
         _run(f"xdotool click --repeat {amount} {btn}")
     else:
-        # ydotool 0.1.8 doesn't have great scroll support
-        btn_map = {"up": 4, "down": 5}
-        btn = btn_map.get(direction, 5)
-        for _ in range(amount):
-            _run(f"ydotool click {btn}")
+        # ydotool 1.x uses mousemove --wheel for scrolling
+        # Negative = scroll up, positive = scroll down
+        delta = amount if direction == "down" else -amount
+        _run(f"ydotool mousemove --wheel -- 0 {delta}")
 
 
 # === Keyboard Actions ===
@@ -147,7 +195,13 @@ def type_text(text: str):
 def press_key(key: str):
     """Press a key or key combination (e.g., 'Return', 'ctrl+c', 'alt+F4')."""
     _ensure_display()
-    _run(f"xdotool key -- {key}")
+    tool = _get_tool()
+    if tool == "xdotool":
+        _run(f"xdotool key -- {key}")
+    else:
+        # ydotool uses different key name format; map common combos
+        ydotool_key = _xdotool_key_to_ydotool(key)
+        _run(f"ydotool key {ydotool_key}")
 
 
 def hotkey(*keys: str):
@@ -160,33 +214,48 @@ def hotkey(*keys: str):
 def focus_window(name: str | None = None, window_id: int | None = None):
     """Focus a window by name or ID."""
     logger.info("Focusing window: name=%s window_id=%s", name, window_id)
-    tool = _get_tool()
-    if window_id:
-        _run(f"{tool} windowactivate {window_id}")
-    elif name:
-        _run(f"{tool} search --name {shlex.quote(name)} windowactivate")
+    if shutil.which("xdotool"):
+        if window_id:
+            _run(f"xdotool windowactivate {window_id}")
+        elif name:
+            _run(f"xdotool search --name {shlex.quote(name)} windowactivate")
+    elif shutil.which("wmctrl"):
+        if window_id:
+            _run(f"wmctrl -i -a {window_id}")
+        elif name:
+            _run(f"wmctrl -a {shlex.quote(name)}")
+    else:
+        raise RuntimeError("No window management tool found. Install xdotool or wmctrl.")
 
 
 def get_active_window() -> dict:
     """Get info about the active window."""
-    tool = _get_tool()
-    result = _run(f"{tool} getactivewindow getwindowname")
-    name = result.stdout.strip()
-    result2 = _run(f"{tool} getactivewindow")
-    wid = result2.stdout.strip()
-    return {"id": wid, "name": name}
+    if shutil.which("xdotool"):
+        result = _run("xdotool getactivewindow getwindowname")
+        name = result.stdout.strip()
+        result2 = _run("xdotool getactivewindow")
+        wid = result2.stdout.strip()
+        return {"id": wid, "name": name}
+    elif shutil.which("xprop"):
+        result = _run("xprop -root _NET_ACTIVE_WINDOW")
+        wid = result.stdout.strip().split()[-1] if result.stdout.strip() else ""
+        return {"id": wid, "name": ""}
+    return {"id": "", "name": ""}
 
 
 def minimize_window():
-    _run(f"{_get_tool()} getactivewindow windowminimize")
+    if shutil.which("xdotool"):
+        _run("xdotool getactivewindow windowminimize")
+    else:
+        press_key("super+h")  # GNOME minimize shortcut
 
 
 def maximize_window():
-    _run(f"{_get_tool()} key super+Up")
+    press_key("super+Up")
 
 
 def close_window():
-    _run(f"{_get_tool()} key alt+F4")
+    press_key("alt+F4")
 
 
 # === Clipboard Actions ===
