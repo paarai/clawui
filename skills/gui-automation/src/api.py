@@ -356,14 +356,14 @@ class _BrowserAPI:
 
     def _get_helper(self):
         if self._helper is None:
-            from .cdp_helper import CDPHelper
+            from .cdp_helper import CDPClient as CDPHelper
             self._helper = CDPHelper()
             self._helper.connect()
         return self._helper
 
     def connect(self, port: int = 9222):
         """Connect to a browser's CDP debug port."""
-        from .cdp_helper import CDPHelper
+        from .cdp_helper import CDPClient as CDPHelper
         self._helper = CDPHelper(port=port)
         self._helper.connect()
 

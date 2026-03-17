@@ -38,7 +38,8 @@
 - [x] **CDP cdp_fill reliability fix** (2026-03-16): Implemented missing `cdp_fill` execution path (label/placeholder/aria-label targeting + framework-safe input/change events), added unit tests
 
 ---
-Last updated: 2026-03-16
+Last updated: 2026-03-17
 
 - [x] **Stream Capture module** (2026-03-16): `clawui/stream_capture.py` - Mutter ScreenCast D-Bus API for zero-dialog ~40 FPS capture
 - [x] **Game Perception module** (2026-03-16): `clawui/game_perception.py` - auto ROI detection, threat/pickup detection, cross-frame tracking, velocity prediction, risk scoring
+- [x] **ydotool backend completion v0.8.4** (2026-03-17): Fixed press_key/scroll/drag/window ops for pure Wayland systems; added key mapping + unit tests

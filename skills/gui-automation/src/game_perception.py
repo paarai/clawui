@@ -15,7 +15,7 @@ Usage:
 """
 
 from __future__ import annotations
-import logging, time, math
+import logging
 from typing import List, Optional, Tuple
 import numpy as np
 
@@ -192,7 +192,8 @@ class GamePerception:
             t2, p2 = self._detect_objects_color(frame)
             # union + dedup by grid cell
             def _dedup(points, cell=8):
-                seen = set(); out = []
+                seen = set()
+                out = []
                 for x, y in points:
                     k = (int(x)//cell, int(y)//cell)
                     if k in seen:
