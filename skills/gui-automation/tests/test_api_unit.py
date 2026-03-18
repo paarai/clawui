@@ -298,7 +298,7 @@ class TestBrowserAPI:
 
 def test_version():
     import clawui
-    assert clawui.__version__ == "0.8.4"
+    assert clawui.__version__ == "0.9.0"
 
 
 def test_enable_logging():

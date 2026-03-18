@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clawui"
-version = "0.8.3"
+version = "0.9.0"
 description = "AI-driven desktop and browser automation for Linux"
 readme = "README.md"
 license = {text = "MIT"}

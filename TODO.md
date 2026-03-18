@@ -37,8 +37,10 @@
 - [x] **Logging migration v0.8.2** (2026-03-16): Complete print→logging migration in agent.py/screenshot.py, add --log-level CLI flag and CLAWUI_LOG_LEVEL env var
 - [x] **CDP cdp_fill reliability fix** (2026-03-16): Implemented missing `cdp_fill` execution path (label/placeholder/aria-label targeting + framework-safe input/change events), added unit tests
 
+- [x] **Structured exception hierarchy v0.9.0** (2026-03-18): Added `clawui.exceptions` module with full hierarchy (ClawUIError → Backend/Perception/Timeout/Agent/Config); migrated cdp_backend, perception, api, actions, screenshot to use typed exceptions; 117 tests passing
+
 ---
-Last updated: 2026-03-17
+Last updated: 2026-03-18
 
 - [x] **Stream Capture module** (2026-03-16): `clawui/stream_capture.py` - Mutter ScreenCast D-Bus API for zero-dialog ~40 FPS capture
 - [x] **Game Perception module** (2026-03-16): `clawui/game_perception.py` - auto ROI detection, threat/pickup detection, cross-frame tracking, velocity prediction, risk scoring

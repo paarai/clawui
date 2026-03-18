@@ -2,6 +2,25 @@
 
 All notable changes to ClawUI will be documented in this file.
 
+## [0.9.0] - 2026-03-18
+
+### Added
+- **Structured exception hierarchy** (`clawui.exceptions`): `ClawUIError` base with typed subclasses for each backend (`CDPError`, `MarionetteError`, `ATSPIError`, `X11Error`, `YdotoolError`), perception (`ElementNotFoundError`, `TextNotFoundError`, `ScreenshotError`), timeouts (`WaitTimeoutError`), agent (`ModelError`), and config (`ConfigError`)
+- All exceptions re-exported from `clawui` package for convenient imports
+- **ydotool backend** for pure Wayland systems: `press_key`, `scroll`, `drag`, window operations with full key mapping
+- `cdp_fill` tool for reliable form input (label/placeholder/aria-label targeting with framework-safe input/change events)
+- Stream capture module (`stream_capture.py`): Mutter ScreenCast D-Bus API for zero-dialog ~40 FPS capture
+- Game perception module (`game_perception.py`): auto ROI detection, threat/pickup detection, cross-frame tracking
+
+### Changed
+- Migrated `cdp_backend`, `perception`, `api`, `actions`, `screenshot` to use typed exceptions instead of generic `RuntimeError`
+- 135 tests passing (up from 117)
+
+### Fixed
+- CDP `cdp_fill` missing execution path
+- Broken unit tests from stale mock paths after refactoring
+- ydotool key mapping and scroll/drag operations
+
 ## [0.8.3] - 2026-03-16
 
 ### Added
@@ -50,6 +69,7 @@ All notable changes to ClawUI will be documented in this file.
 - Python API (`from clawui.api import ...`)
 - CLI with subcommands: `run`, `apps`, `tree`, `screenshot`, `doctor`, `config`
 
+[0.9.0]: https://github.com/longgo1001/clawui/compare/v0.8.3...v0.9.0
 [0.8.3]: https://github.com/longgo1001/clawui/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/longgo1001/clawui/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/longgo1001/clawui/compare/v0.8.0...v0.8.1

@@ -24,7 +24,7 @@ Full API:
 
 import logging
 
-__version__ = "0.8.4"
+__version__ = "0.9.0"
 
 logging.getLogger("clawui").addHandler(logging.NullHandler())
 
