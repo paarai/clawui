@@ -134,7 +134,3 @@ Use `clawui doctor --fix` to auto-install missing apt/pip dependencies when poss
 | CDP won't connect | Launch Chromium with `--remote-debugging-port=9222` |
 | Screenshots fail | Install `gnome-screenshot` or use Pillow fallback |
 | OCR not working | Install `tesseract-ocr` |
-
-## License
-
-MIT
