@@ -42,7 +42,10 @@ import logging
 import time
 from pathlib import Path
 from typing import Optional
-from clawui.exceptions import ElementNotFoundError, WaitTimeoutError
+from clawui.exceptions import (
+    ClawUIError, BackendError, PerceptionError,
+    ElementNotFoundError, WaitTimeoutError,
+)
 
 logger = logging.getLogger("clawui")
 
@@ -51,11 +54,19 @@ logger = logging.getLogger("clawui")
 # Retry decorator for flaky UI operations
 # ---------------------------------------------------------------------------
 
+#: Default exception types that trigger a retry — covers all transient ClawUI
+#: failures plus common OS/network errors.
+RETRIABLE_EXCEPTIONS: tuple = (
+    BackendError, PerceptionError,          # ClawUI typed exceptions
+    RuntimeError, TimeoutError, OSError, ConnectionError,  # stdlib fallbacks
+)
+
+
 def retry(
     max_attempts: int = 3,
     delay: float = 0.5,
     backoff: float = 1.5,
-    exceptions: tuple = (RuntimeError, TimeoutError, OSError, ConnectionError),
+    exceptions: tuple = RETRIABLE_EXCEPTIONS,
 ):
     """Retry decorator with exponential backoff for flaky UI operations.
 

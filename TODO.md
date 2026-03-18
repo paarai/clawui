@@ -37,7 +37,8 @@
 - [x] **Logging migration v0.8.2** (2026-03-16): Complete print→logging migration in agent.py/screenshot.py, add --log-level CLI flag and CLAWUI_LOG_LEVEL env var
 - [x] **CDP cdp_fill reliability fix** (2026-03-16): Implemented missing `cdp_fill` execution path (label/placeholder/aria-label targeting + framework-safe input/change events), added unit tests
 
-- [x] **Structured exception hierarchy v0.9.0** (2026-03-18): Added `clawui.exceptions` module with full hierarchy (ClawUIError → Backend/Perception/Timeout/Agent/Config); migrated cdp_backend, perception, api, actions, screenshot to use typed exceptions; 117 tests passing
+- [x] **Structured exception hierarchy v0.9.0** (2026-03-18): Added `clawui.exceptions` module with full hierarchy (ClawUIError → Backend/Perception/Timeout/Agent/Config); migrated cdp_backend, perception, api, actions, screenshot to use typed exceptions; 135 tests passing
+- [x] **Version bump v0.9.0** (2026-03-18): Unified version across pyproject.toml/__init__.py/tests, updated CHANGELOG
 
 ---
 Last updated: 2026-03-18
